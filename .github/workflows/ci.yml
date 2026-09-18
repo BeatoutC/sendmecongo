@@ -12,7 +12,10 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@v1
+      - name: Install the pinned toolchain
+        run: |
+          TOOLCHAIN=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
+          rustup toolchain install "$TOOLCHAIN" --profile minimal
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
       - run: cargo build --workspace --release
@@ -23,8 +26,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@v1
-        with:
-          targets: x86_64-pc-windows-msvc
+      - name: Install the pinned toolchain + Windows target
+        run: |
+          TOOLCHAIN=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
+          rustup toolchain install "$TOOLCHAIN" --profile minimal
+          rustup target add --toolchain "$TOOLCHAIN" x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --target x86_64-pc-windows-msvc --no-default-features -p sendmecongo-recv
