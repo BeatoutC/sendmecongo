@@ -1,0 +1,22 @@
+{
+  "verdict": "DECODABLE",
+  "completeness": 1.2,
+  "symbol_delivery_ratio": 1.0,
+  "goodput_bytes_per_sec": 40996.25,
+  "input": "out/small",
+  "scanned_frames": 24,
+  "decoded_frames": 24,
+  "rejected_frames": 0,
+  "unique_symbols": 24,
+  "duplicate_frames": 0,
+  "decode_rate": 1.0,
+  "symbol_size": 1710,
+  "object_len": 32797,
+  "source_symbols": 20,
+  "sessions": {
+    "3975096227": 24
+  },
+  "fps": 30.0,
+  "elapsed_sec": 0.8,
+  "effective_bytes_per_sec": 51300.0
+}

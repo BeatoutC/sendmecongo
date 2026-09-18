@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # 全量测试跑在 macOS 上：GUI 层（eframe/objc2）在这条工具链上最接近发布形态，
+  # Linux 上 eframe 还需要一串 X11 系统库，收益不值当。
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@v1
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace
+      - run: cargo build --workspace --release
+
+  # 与本地验收习惯相同的 Windows target check：把「跨平台代码问题」和
+  # 「C++ 依赖编译问题」分开定位，所以 --no-default-features 只查我们自己的 Rust 代码。
+  windows-target:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --target x86_64-pc-windows-msvc --no-default-features -p sendmecongo-recv

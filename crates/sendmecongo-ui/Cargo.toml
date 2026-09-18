@@ -1,0 +1,25 @@
+[package]
+name = "sendmecongo-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "egui plumbing shared by the sendmecongo sender and receiver GUI"
+
+[dependencies]
+eframe.workspace = true
+
+# The macOS menu bar. `objc2` is already in the tree — eframe, winit, glutin and rfd all
+# pull it in — so naming these three crates adds nothing to download; the versions have to
+# match the ones they use (0.6 / 0.3) or the ObjC types would not be the same types.
+#
+# Features are the classes actually touched: the application object, its main menu, the
+# items in it, and `NSControlStateValue` (which lives with NSCell) for the radio mark.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = [
+    "NSApplication",
+    "NSMenu",
+    "NSMenuItem",
+    "NSCell",
+] }
+objc2-foundation = { version = "0.3", features = ["NSString", "NSArray"] }

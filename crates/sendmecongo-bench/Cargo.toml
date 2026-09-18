@@ -1,0 +1,13 @@
+[package]
+name = "sendmecongo-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "M0 bench: QR capacity calibration, frame sequence export, erasure simulation"
+
+[dependencies]
+sendmecongo-core = { path = "../sendmecongo-core" }
+minifb = "0.27"
+qrcode = "0.14"
+# Only for the `icon` subcommand, which composes an .icns source PNG.
+image = "0.25"

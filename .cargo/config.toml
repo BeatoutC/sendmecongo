@@ -1,0 +1,10 @@
+# Windows 产物用静态 CRT，得到一个不依赖 VC 运行库分发的单文件 exe。
+# 只作用于 Windows 目标，不影响 macOS/Linux 构建。
+#
+# 两个 target 都配：MSVC 是 Windows 默认；GNU 是没装 VS Build Tools 时的可行替代
+# ——它自带 mingw 运行时，不需要管理员权限去装东西。
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "target-feature=+crt-static"]

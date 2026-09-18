@@ -1,0 +1,51 @@
+[package]
+name = "sendmecongo-recv"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Standalone SMQ1 receiver: recover a file from a phone recording of the QR stream, with no third-party runtime dependencies"
+default-run = "sendmecongo-recv"
+
+[features]
+default = ["h264"]
+# H.264 support, via openh264's vendored C++ (built through `cc`).
+#
+# Optional because it is the only part of this crate that needs a C++ compiler.
+# `cargo check --target x86_64-pc-windows-msvc --no-default-features` therefore
+# verifies that *our* code is portable without dragging a cross-compiler in, and
+# a machine that cannot build the C++ half still gets a working HEVC receiver —
+# which is what every iPhone produces anyway.
+h264 = ["dep:openh264"]
+
+[dependencies]
+sendmecongo-core = { path = "../sendmecongo-core" }
+# The window. Shared with the sender so both apps are on one egui version.
+sendmecongo-ui = { path = "../sendmecongo-ui" }
+eframe.workspace = true
+# Native "pick a file" dialog for the window. Already in the tree via the sender,
+# so this adds no new transitive crates.
+rfd = "0.17"
+# Pure Rust HEVC (H.265) decoder. Not optional: every iPhone recording in the
+# test corpus turned out to be HEVC, i.e. exactly the format `openh264` refuses.
+rusty_h265 = "0.6"
+# H.264 decoder, covering Android captures, which mostly default to AVC.
+# It soft-fails its NASM assembly step, so no assembler is required on the build
+# machine and the crate still compiles as a fallback.
+openh264 = { version = "0.9", optional = true }
+# Pure Rust port of ZXing. Only QR is compiled in.
+#
+# `encoding_rs` is not optional in practice: the SMQ payload is a QR *byte*
+# segment, and rxing routes byte segments through the character-set layer even
+# when the caller only ever reads `getRawBytes()`. Compiling that layer out
+# (`no_character_set_support`) makes the decoder reject every frame, which looks
+# exactly like "the camera saw nothing" from the outside.
+rxing = { version = "0.9", default-features = false, features = [
+    "decoders",
+    "multi_barcode_readers",
+    "qrcode",
+    "encoding_rs",
+] }
+
+[[bin]]
+name = "sendmecongo-recv"
+path = "src/main.rs"

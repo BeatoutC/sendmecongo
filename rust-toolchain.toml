@@ -1,0 +1,10 @@
+# Pinned per project, so the toolchain the optical pipeline needs is present no matter
+# what the machine's default is — and so the machine's default is left alone.
+#
+# Why 1.89+: raptorq 2.0.1 applies `#[target_feature(enable = "avx512f")]` to its
+# x86/x86_64 code paths, and those features only stabilised in 1.89. Anything older fails
+# to build any x86_64 target — which is the Windows build. It compiles fine on Apple
+# Silicon because those cfg blocks are inert there, which is exactly why this stayed
+# hidden until the first cross-target check.
+[toolchain]
+channel = "1.98.1"

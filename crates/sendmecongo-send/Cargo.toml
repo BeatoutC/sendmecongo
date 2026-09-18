@@ -1,0 +1,23 @@
+[package]
+name = "sendmecongo-send"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "sendmecongo GUI sender — choose a file and a preset, stream it as a looping QR display"
+
+[dependencies]
+sendmecongo-core = { path = "../sendmecongo-core" }
+sendmecongo-ui = { path = "../sendmecongo-ui" }
+eframe.workspace = true
+rfd = "0.17"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = "0.24"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Console",
+    "Win32_UI_HiDpi",
+] }

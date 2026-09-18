@@ -1,0 +1,37 @@
+{
+  "verdict": "DECODABLE",
+  "completeness": 1.2,
+  "symbol_delivery_ratio": 0.7262247838616714,
+  "time_to_complete_sec": 0.7,
+  "goodput_bytes_per_sec": 46852.857142857145,
+  "recovery_curve": [
+    23,
+    23,
+    23,
+    23,
+    23,
+    23,
+    23,
+    23,
+    23,
+    24
+  ],
+  "longest_blackout_frames": 53,
+  "longest_blackout_sec": 1.7666666666666666,
+  "input": "recordings/01.mp4",
+  "scanned_frames": 347,
+  "decoded_frames": 252,
+  "rejected_frames": 0,
+  "unique_symbols": 24,
+  "duplicate_frames": 228,
+  "decode_rate": 0.7262247838616714,
+  "symbol_size": 1710,
+  "object_len": 32797,
+  "source_symbols": 20,
+  "sessions": {
+    "3975096227": 252
+  },
+  "fps": 30.0,
+  "elapsed_sec": 11.566666666666666,
+  "effective_bytes_per_sec": 3548.1268011527377
+}

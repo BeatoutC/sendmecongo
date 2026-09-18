@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/sendmecongo-core",
+    "crates/sendmecongo-bench",
+    "crates/sendmecongo-ui",
+    "crates/sendmecongo-send",
+    "crates/sendmecongo-recv",
+]
+
+[workspace.package]
+version = "0.4.1"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/BeatoutC/sendmecongo"
+
+[workspace.dependencies]
+# 0.33 is the newest eframe whose MSRV (1.88) matches the toolchain on the build machine.
+# 0.34+ wants rustc 1.95. Pinned here rather than in each crate so the sender GUI and the
+# receiver GUI can never end up on two different egui versions, which would not link.
+eframe = "0.33"
+
+[profile.release]
+opt-level = 3
+lto = "thin"

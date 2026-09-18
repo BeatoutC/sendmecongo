@@ -1,0 +1,50 @@
+{
+  "verdict": "DECODABLE",
+  "completeness": 1.1233766233766234,
+  "symbol_delivery_ratio": 0.5080428954423593,
+  "time_to_complete_sec": 5.6,
+  "goodput_bytes_per_sec": 46816.78571428572,
+  "recovery_curve": [
+    39,
+    77,
+    114,
+    142,
+    159,
+    160,
+    161,
+    161,
+    161,
+    173
+  ],
+  "longest_blackout_frames": 0,
+  "longest_blackout_sec": 0.0,
+  "segment_decode_rates_pct": [
+    100.0,
+    100.0,
+    100.0,
+    100.0,
+    100.0,
+    100.0,
+    100.0,
+    100.0,
+    100.0,
+    100.0,
+    100.0
+  ],
+  "input": "recordings/03.mov",
+  "scanned_frames": 373,
+  "decoded_frames": 379,
+  "rejected_frames": 3,
+  "unique_symbols": 173,
+  "duplicate_frames": 206,
+  "decode_rate": 1.0160857908847185,
+  "symbol_size": 1710,
+  "object_len": 262174,
+  "source_symbols": 154,
+  "sessions": {
+    "2921434972": 379
+  },
+  "fps": 30.0,
+  "elapsed_sec": 12.433333333333334,
+  "effective_bytes_per_sec": 23793.29758713137
+}

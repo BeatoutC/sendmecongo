@@ -1,0 +1,16 @@
+[package]
+name = "sendmecongo-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "SMQ1 optical transfer codec: container, frame, RaptorQ fountain coding, QR rendering"
+
+[dependencies]
+brotli = "8"
+crc32fast = "1"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+image = "0.25"
+minifb = "0.27"
+qrcode = "0.14"
+raptorq = "2.0.1"
+thiserror = "1"
