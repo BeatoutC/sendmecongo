@@ -1,5 +1,10 @@
 # SendMeCongo
 
+[![CI](https://github.com/BeatoutC/sendmecongo/actions/workflows/ci.yml/badge.svg)](https://github.com/BeatoutC/sendmecongo/actions/workflows/ci.yml)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+
+English · [简体中文](README.zh-CN.md)
+
 **One-way optical file transfer for air-gapped machines.** The sender renders a
 fountain-coded stream of QR codes on screen; any phone camera can record it, and a
 single zero-dependency executable rebuilds the file — byte-for-byte identical.

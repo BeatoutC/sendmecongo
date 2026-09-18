@@ -1,5 +1,10 @@
 # SendMeCongo
 
+[![CI](https://github.com/BeatoutC/sendmecongo/actions/workflows/ci.yml/badge.svg)](https://github.com/BeatoutC/sendmecongo/actions/workflows/ci.yml)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+
+[English](README.md) · 简体中文
+
 **面向物理隔离机器的单向光学文件传输。** 发送端在屏幕上播放喷泉编码的二维码流，
 任何手机摄像头都能录下来，一个零依赖的可执行文件就能把文件原样还原——逐字节一致。
 
