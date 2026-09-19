@@ -1,4 +1,4 @@
-# 在 Windows 上构建 sendmecongo-send.exe（单文件、免运行时）。
+﻿# 在 Windows 上构建 sendmecongo-send.exe（单文件、免运行时）。
 #
 #   powershell -ExecutionPolicy Bypass -File tools\build-windows.ps1
 #
@@ -10,7 +10,10 @@ Set-Location (Join-Path $PSScriptRoot "..")
 
 $target = "x86_64-pc-windows-msvc"
 Write-Host "== 检查目标工具链 $target" -ForegroundColor Cyan
-rustup target add $target 2>$null
+& rustup target add $target | Out-Null
+
+Write-Host "== 准备应用图标" -ForegroundColor Cyan
+& powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "make_ico.ps1") | Out-Null
 
 Write-Host "== 构建（release，LTO）" -ForegroundColor Cyan
 cargo build --release --target $target

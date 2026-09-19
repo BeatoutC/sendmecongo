@@ -3612,7 +3612,7 @@ checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 
 [[package]]
 name = "sendmecongo-bench"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "image",
  "minifb",
@@ -3622,7 +3622,7 @@ dependencies = [
 
 [[package]]
 name = "sendmecongo-core"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "brotli",
  "crc32fast",
@@ -3636,7 +3636,7 @@ dependencies = [
 
 [[package]]
 name = "sendmecongo-recv"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "eframe",
  "openh264",
@@ -3645,11 +3645,13 @@ dependencies = [
  "rxing",
  "sendmecongo-core",
  "sendmecongo-ui",
+ "windows-sys 0.59.0",
+ "winres",
 ]
 
 [[package]]
 name = "sendmecongo-send"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "core-graphics 0.24.0",
  "eframe",
@@ -3657,11 +3659,12 @@ dependencies = [
  "sendmecongo-core",
  "sendmecongo-ui",
  "windows-sys 0.59.0",
+ "winres",
 ]
 
 [[package]]
 name = "sendmecongo-ui"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "eframe",
  "objc2 0.6.4",
@@ -4019,6 +4022,15 @@ checksum = "b1e27c91459209c2986af3dcf603a5a74a4368754ce37414f59acc971167f643"
 dependencies = [
  "displaydoc",
  "zerovec",
+]
+
+[[package]]
+name = "toml"
+version = "0.5.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f4f7f0dd8d50a853a531c426359045b1998f04219d88799810762cd4ad314234"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -5100,6 +5112,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "winres"
+version = "0.1.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b68db261ef59e9e52806f688020631e987592bd83619edccda9c47d42cde4f6c"
+dependencies = [
+ "toml",
 ]
 
 [[package]]

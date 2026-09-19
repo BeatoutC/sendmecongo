@@ -92,24 +92,48 @@ pub fn search_folders() -> Vec<PathBuf> {
     dirs
 }
 
-/// Select the file in Finder, so "where did it go" needs no answer.
+/// Select the file in Finder/Explorer, so "where did it go" needs no answer.
 pub fn reveal(path: &Path) {
-    let _ = std::process::Command::new("open")
-        .arg("-R")
-        .arg(path)
-        .status();
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open")
+            .arg("-R")
+            .arg(path)
+            .status();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("explorer")
+            .arg(format!("/select,{}", path.display()))
+            .status();
+    }
 }
 
 /// A last-resort native alert, for the case where the window itself could not
 /// open — otherwise the app would just bounce once in the Dock and vanish.
 pub fn alert(title: &str, message: &str) {
-    let script = alert_script(title, message);
-    let _ = std::process::Command::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .status();
+    #[cfg(target_os = "macos")]
+    {
+        let script = alert_script(title, message);
+        let _ = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(script)
+            .status();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let script = format!(
+            "Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show('{}', '{}')",
+            message.replace('\'', "''"),
+            title.replace('\'', "''")
+        );
+        let _ = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-Command", &script])
+            .status();
+    }
 }
 
+#[cfg(target_os = "macos")]
 fn alert_script(title: &str, message: &str) -> String {
     // AppleScript has no `\n` escape inside a literal; concatenating with
     // `return` is the portable way to build a multi-line message.
@@ -136,6 +160,7 @@ fn alert_script(title: &str, message: &str) -> String {
 
 /// AppleScript string literals take backslashes and double quotes literally, so
 /// both have to be escaped; newlines are handled by the caller.
+#[cfg(target_os = "macos")]
 fn escape(text: &str) -> String {
     text.replace('\\', "\\\\").replace('"', "\\\"")
 }

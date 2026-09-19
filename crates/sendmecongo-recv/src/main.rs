@@ -11,6 +11,8 @@
 //! On macOS it also ships as `sendmecongo-recv.app`, because a receiver should be
 //! able to double-click something — see `finder` for what that changes.
 
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 mod decode;
 mod finder;
 mod gui;
@@ -28,7 +30,18 @@ use std::sync::Arc;
 
 const VIDEO_EXTENSIONS: [&str; 5] = ["mov", "mp4", "m4v", "MOV", "MP4"];
 
+fn attach_parent_console() {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+        unsafe {
+            AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+    }
+}
+
 fn main() -> ExitCode {
+    attach_parent_console();
     // LaunchServices still hands a bundled app `-psn_0_1234` on some systems.
     // It is not a file, and treating it as one fails with a puzzling message.
     let args: Vec<String> = std::env::args()
@@ -100,10 +113,11 @@ fn wants_gui_with(args: &[String], from_finder: bool, terminal: bool, no_dialog:
     // Started with nothing to do and a terminal to talk to. There is no script to be
     // written yet, and the window does the same job — finding the recordings nearby,
     // asking which one, showing progress — with the result visible instead of scrolled
-    // away. This is also the path a *bare binary* takes when Finder double-clicks it:
-    // macOS opens those in Terminal, so without this rule the app looks like a console
-    // program that numbers a list at you and never opens a window.
-    cfg!(target_os = "macos") && args.is_empty() && terminal
+    // away. This is also the path a *bare binary* takes when Finder/Explorer double-clicks it:
+    // macOS opens those in Terminal and Windows starts it with a console attached, so without
+    // this rule the app looks like a console program that numbers a list at you and immediately
+    // exits if standard input closes or no files are given.
+    args.is_empty() && (terminal || cfg!(target_os = "windows"))
 }
 
 fn run(args: &[String]) -> Result<(), String> {

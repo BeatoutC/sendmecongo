@@ -49,3 +49,13 @@ rxing = { version = "0.9", default-features = false, features = [
 [[bin]]
 name = "sendmecongo-recv"
 path = "src/main.rs"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_Console",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[target.'cfg(target_os = "windows")'.build-dependencies]
+winres = "0.1"
