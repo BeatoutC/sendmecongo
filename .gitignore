@@ -19,6 +19,11 @@
 .DS_Store
 __pycache__/
 
+# tools/analyze.py（光学测量）的 Python 环境：opencv-python-headless + zxing-cpp。
+# 重建方式：python3 -m venv .venv && .venv/bin/pip install --no-cache-dir \
+#   opencv-python-headless zxing-cpp
+/.venv/
+
 # 本地的开发笔记目录（.workbuddy/memory/*.md）：内容是本机这一轮开发的过程记录，
 # 含绝对路径和定点的实机验证结果，跨机器/多人协作时会互相冲突，所以不入库。
 /.workbuddy/
