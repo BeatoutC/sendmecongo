@@ -267,10 +267,25 @@ impl SenderApp {
         if self.display_pinned || self.displays.len() < 2 {
             return;
         }
-        let Some(rect) = ctx.input(|i| i.viewport().outer_rect) else {
+        let rect = ctx.input(|i| i.viewport().outer_rect);
+        let Some(rect) = rect else {
             return;
         };
-        let center = rect.center().x as isize;
+        // Windows enumerates in physical pixels while egui rects are logical
+        // points. The window sits on the monitor whose scale factor produced
+        // those logical coordinates, so multiplying by it lands on the physical
+        // position the monitor list uses. macOS bounds are already logical, and
+        // the multiplication would corrupt them there — hence the cfg.
+        #[cfg(windows)]
+        let center = {
+            let scale = ctx
+                .input(|i| i.viewport().native_pixels_per_point)
+                .unwrap_or(1.0) as f64;
+            rect.center().x as f64 * scale
+        };
+        #[cfg(not(windows))]
+        let center = rect.center().x as f64;
+        let center = center as isize;
         if let Some(idx) = self
             .displays
             .iter()

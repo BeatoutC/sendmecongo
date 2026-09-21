@@ -27,6 +27,14 @@ use std::io::Read;
 
 fn main() -> eframe::Result<()> {
     attach_parent_console();
+    // Before any window or monitor query, in BOTH modes: the GUI enumerates
+    // monitors and the player child places its window from those coordinates, so
+    // the two processes must share one coordinate space. The player never runs
+    // winit (which would set this itself on the GUI path) — without it a scaled
+    // monitor virtualises the child's coordinates and the QR window lands wrong
+    // and renders blurry. See display.rs module docs.
+    #[cfg(windows)]
+    display::ensure_dpi_awareness();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let playing = args.first().map(String::as_str) == Some("--play");
     // Before anything can print or draw: the player is a short-lived child of the GUI and
