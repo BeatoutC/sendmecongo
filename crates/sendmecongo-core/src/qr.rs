@@ -2,8 +2,29 @@
 
 use crate::Result;
 use image::{GrayImage, Luma};
+use qrcode::bits::Bits;
 use qrcode::types::Color;
 use qrcode::{EcLevel, QrCode, Version};
+
+/// Encode a payload in pure byte mode (single byte segment, no ECI, no
+/// mode switching).
+///
+/// We deliberately bypass `QrCode::with_version`: its "optimal" segmentation is
+/// a greedy algorithm (qrcode 0.14 `optimize.rs`, which admits it does not
+/// implement Annex J) and can spend *more* bits than plain byte mode when
+/// binary data happens to contain alphanumeric (9–16 byte) or numeric
+/// (4–8 byte) runs — up to ~18 extra bits ≈ 2 bytes. Near full capacity that
+/// overflowed into spurious `DataTooLong` errors: measured failure cliff at
+/// v30-L payload length 1731..=1732 and v40-L 2952..=2953, and the megabit
+/// preset's frames are 2950 bytes — one unlucky frame killed the whole
+/// transfer with exit code 2 (seen on Windows as the QR window vanishing
+/// ~10–20 s in; 2026-09-21, reproduced on macOS too).
+fn encode(payload: &[u8], version: i16, ec: EcLevel) -> qrcode::QrResult<QrCode> {
+    let mut bits = Bits::new(Version::Normal(version));
+    bits.push_byte_data(payload)?;
+    bits.push_terminator(ec)?;
+    QrCode::with_bits(bits, ec)
+}
 
 /// Largest byte-mode payload that fits a given version / ECC level.
 /// Measured against the encoder itself, so it can never drift from the truth.
@@ -52,7 +73,7 @@ fn measure_capacity(version: i16, ec: EcLevel) -> usize {
     let mut hi = 8192usize;
     while lo < hi {
         let mid = (lo + hi + 1).div_ceil(2);
-        if QrCode::with_version(vec![0u8; mid], Version::Normal(version), ec).is_ok() {
+        if encode(&vec![0u8; mid], version, ec).is_ok() {
             lo = mid;
         } else {
             hi = mid - 1;
@@ -63,7 +84,7 @@ fn measure_capacity(version: i16, ec: EcLevel) -> usize {
 
 /// Render a payload to a grayscale module matrix, 1 pixel per module, 4-module quiet zone.
 pub fn matrix(payload: &[u8], version: i16, ec: EcLevel) -> Result<GrayImage> {
-    let code = QrCode::with_version(payload, Version::Normal(version), ec)?;
+    let code = encode(payload, version, ec)?;
     let width = code.width();
     let colors = code.to_colors();
     let quiet = 4usize;
@@ -154,6 +175,32 @@ mod tests {
     fn known_capacities_are_stable() {
         assert_eq!(capacity(30, EcLevel::L), 1732);
         assert_eq!(capacity(40, EcLevel::L), 2953);
+    }
+
+    /// Regression for the 2026-09-21 megabit bug: payloads sitting exactly at
+    /// the measured capacity used to fail ~0.02 % of the time under the old
+    /// greedy-segmentation encoder, and one failing frame aborted the whole
+    /// transfer (exit 2). Deterministic xorshift, 200 samples at the exact
+    /// cliff for both versions the presets use — pure byte mode must take
+    /// every one of them.
+    #[test]
+    fn full_capacity_random_payloads_always_encode() {
+        let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for &version in &[30i16, 40] {
+            let cap = capacity(version, EcLevel::L);
+            assert!(cap > 0);
+            for _ in 0..200 {
+                let data: Vec<u8> = (0..cap).map(|_| (next() & 0xFF) as u8).collect();
+                encode(&data, version, EcLevel::L)
+                    .unwrap_or_else(|e| panic!("v{version}-L full-capacity payload rejected: {e}"));
+            }
+        }
     }
 
     #[test]

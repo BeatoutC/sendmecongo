@@ -36,7 +36,7 @@ fn main() -> eframe::Result<()> {
         std::process::exit(match run_player(&args[1..]) {
             Ok(()) => 0,
             Err(e) => {
-                say(format!("sendmecongo: {e}"));
+                say_err(format!("sendmecongo: {e}"));
                 2
             }
         });
@@ -63,6 +63,15 @@ fn lang_arg(args: &[String]) -> Option<String> {
 fn say(line: String) {
     use std::io::Write;
     let _ = writeln!(std::io::stdout(), "{line}");
+}
+
+/// Same contract as `say`, but for errors: stderr, not stdout. The GUI pipes the
+/// player child's stdout to null (it only reads stderr into the status line), so
+/// a failure reported on stdout vanished without a trace — the Windows QR window
+/// "disappearing" bug was invisible for exactly that reason (2026-09-21).
+fn say_err(line: String) {
+    use std::io::Write;
+    let _ = writeln!(std::io::stderr(), "{line}");
 }
 
 /// Windows only, best-effort: a windows-subsystem process has no console of its own,
