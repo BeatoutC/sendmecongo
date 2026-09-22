@@ -186,8 +186,13 @@ Security → Open Anyway on 15+; no challenge when copied from USB).
 - [ ] Real-Windows-machine run of the packaged `.exe`
 - [ ] megabit re-measured at `--size 1600` + 4K60 (105.2 KB/s was at 700 px
       per code and 4K30; headroom expected)
-- [ ] M2: AES-256-GCM encryption envelope + audit log
-- [ ] M3: multi-file batches, automated acceptance matrix
+- [ ] M2 (v0.5.0, in progress): resumable transfer — receiver-side progress
+      manifests merged across recordings, per-block symbol grid, and a
+      type-in resume code so the sender replays only the deficit — plus an
+      agent skill (SKILL.md + CLI/JSON contract) so an AI agent can drive
+      send/receive end to end. See [docs/M2-DESIGN.md](docs/M2-DESIGN.md)
+- [ ] M3: AES-256-GCM encryption envelope + audit log, multi-file batches,
+      automated acceptance matrix
 
 ## License
 
