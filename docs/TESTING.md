@@ -59,9 +59,23 @@ cargo build --release -p sendmecongo-recv
 **验收矩阵**（改完接收端就该重跑一遍）：
 
 ```bash
-sh tools/verify-recv.sh          # 全部 7 段
+sh tools/verify-recv.sh          # 比对档：全部 7 段，逐字节比对
 sh tools/verify-recv.sh 07 08    # 只跑指定几段
+sh tools/verify-recv.sh --smoke  # 冒烟档：不需要基准文件，recordings/ 里每段都跑
 ```
+
+比对档每段都要求 `testdata/` 里有原件，**没有配对原件的录像它天生覆盖不到** ——
+系统相机录的安卓 mp4 恰好是这一类（原件在隔离机里，拿不出来比对）。
+**冒烟档就是补这个缺口的**：只验「打开得了吗、跑得完吗」，不看还原得对不对。
+完整还原（退出码 0）和部分接收（2）都算通路正常 —— 部分接收是合法的中间状态，
+录像录得不够长本来就这样；只有失败（1）算翻车。
+
+新拿到一段来路不明的录像，**先冒烟再谈别的**。它按扩展名自动发现
+`recordings/` 里的每一段，所以往那儿丢什么就测什么。
+
+> **两个档都不会往 `recordings/` 里写东西**：`recv` 把续传清单存在录像旁边
+> （`<名字>.smr.json`），所以脚本都从输出目录软链接过去跑，进度文件落在 `out/` 下，
+> 每次重跑跟着一起清掉。
 
 **接收方那边出问题时怎么定位**：设 `SENDMECONGO_DUMP_FRAME=<第几帧>:<输出.pgm>`，
 它会把解码出来的那一帧灰度图原样写出来。ppm/pgm 可以直接用 `cv2.imread` 读，
@@ -259,6 +273,7 @@ done
 | 现象 | 原因 | 处理 |
 |---|---|---|
 | `cannot open video` | iPhone 录的 HEVC | 相机设置改「兼容性最佳」，或转码 `ffmpeg -i in.mov -c:v libx264 out.mp4` |
+| **安卓录像打不开**，三种报法之一：`box size out of range` / `这不是一个 MP4/MOV 文件（找不到 moov）` / `这是分片 MP4（moof），暂不支持` | 厂商往录像里塞私有元数据（华为写 `model…buildVersion…debugVideoInfo`）。塞在 `moov` **之后** → 头 8 字节是文本，读成越界的 box 尺寸；塞在 `moov` **之前** → 扫描提前收手，找不到 moov；内容里恰好凑出 4 字节对齐的 `moof` → 被当成分片电影 | 已修（`isobmff.rs` 三处：顶层扫描容错 `children(.., tolerant=true)`、`hunt_for_moov` 兜底按签名找回 moov、`settle` 让「有样本的 moov」优先于 `moof` 判据）。旧版临时绕过：`ffmpeg -i in.mp4 -c copy out.mp4` 重新封装 |
 | 一个符号都没解出 | 窗口被遮挡 / 亮度太低 / 对焦没锁 | 先做 L1 静态测试 |
 | 只解出前几帧 | 自动对焦拉风箱 | 长按锁定 AE/AF |
 | `codes/frame` 在 1.0↔2.0 之间摆动 | **双通道相位拍频**：相机帧率 = 每 lane 更新率，相对相位缓慢漂移 | 换 4K60 拍摄（相机帧率 = 每 lane 的 2 倍）；看 `segment_codes_per_frame` 确认 |
