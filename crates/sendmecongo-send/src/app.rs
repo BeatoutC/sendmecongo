@@ -13,6 +13,7 @@
 use crate::display::{self, Display};
 use crate::prepare::{self, Job, Phase, Prepared};
 use sendmecongo_core::preset::{self, Preset};
+use sendmecongo_core::RepairRequest;
 use sendmecongo_ui::i18n::{self, fill};
 use sendmecongo_ui::theme::{self, Theme};
 use eframe::egui;
@@ -121,6 +122,10 @@ pub struct SenderApp {
     cjk_font_ok: bool,
     /// The "拍摄要求" disclosure starts closed; the amber tag tells the operator it matters.
     tips_open: bool,
+    /// M2.3: the receiver's repair code, typed or pasted by the operator. Empty
+    /// means a normal full broadcast; a validated code turns the next start into
+    /// a repair broadcast of only the missing symbols.
+    repair_code: String,
     /// The language this window last drew itself in. The menu bar is nobody's window, so a
     /// language picked there arrives without any event: comparing against this each frame
     /// is how the window notices.
@@ -164,6 +169,7 @@ impl SenderApp {
             status_bad: false,
             cjk_font_ok,
             tips_open: false,
+            repair_code: String::new(),
             lang: i18n::current(),
         };
         if let Some(path) = initial {
@@ -174,6 +180,33 @@ impl SenderApp {
 
     fn preset(&self) -> Preset {
         preset::ALL[self.preset_idx]
+    }
+
+    /// The repair code as a validated request. `None` when the box is empty
+    /// (normal broadcast); `Some(Err)` when it does not parse or does not match
+    /// the prepared container and preset. Full validation needs the prepared
+    /// object, so a syntactically fine code on an unprepared file is reported
+    /// as unverifiable rather than blessed.
+    fn repair_request(&self) -> Option<Result<RepairRequest, String>> {
+        let text = self.repair_code.trim();
+        if text.is_empty() {
+            return None;
+        }
+        let request = match RepairRequest::decode(text) {
+            Ok(r) => r,
+            Err(e) => return Some(Err(e.to_string())),
+        };
+        let Prep::Ready(prepared) = &self.prep else {
+            return None;
+        };
+        let matches = sendmecongo_core::crc32(&prepared.object) == request.session
+            && prepared.object.len() as u32 == request.object_len
+            && self.preset().symbol_size() == request.symbol_size;
+        Some(if matches {
+            Ok(request)
+        } else {
+            Err(i18n::t().snd_repair_mismatch.to_string())
+        })
     }
 
     fn lanes(&self) -> usize {
@@ -453,6 +486,11 @@ impl SenderApp {
         }
         if self.cycles > 0 {
             cmd.arg("--cycles").arg(self.cycles.to_string());
+        }
+        // A validated repair code turns this into a repair broadcast; the player
+        // re-validates against the container it receives, authoritatively.
+        if let Some(Ok(_)) = self.repair_request() {
+            cmd.arg("--repair-code").arg(self.repair_code.trim());
         }
 
         // stdin carries the container; stdout is dropped and stderr is captured. On
@@ -1028,6 +1066,63 @@ impl SenderApp {
                         .color(t.text_tertiary),
                 );
             });
+        });
+
+        self.ui_repair(ui, t);
+    }
+
+    /// M2.3: the repair-code box. Empty means a normal broadcast; a code that
+    /// parses and matches the prepared container turns the next start into a
+    /// replay of only the missing symbols.
+    fn ui_repair(&mut self, ui: &mut egui::Ui, t: &Theme) {
+        let i = i18n::t();
+        ui.add_space(10.0);
+        theme::card_edge(t).show(ui, |ui| {
+            ui.label(
+                egui::RichText::new(i.snd_repair_title)
+                    .size(13.0)
+                    .strong()
+                    .color(t.text_primary),
+            );
+            ui.add_space(2.0);
+            ui.label(
+                egui::RichText::new(i.snd_repair_hint)
+                    .size(11.5)
+                    .color(t.text_secondary),
+            );
+            ui.add_space(6.0);
+            ui.add(
+                egui::TextEdit::singleline(&mut self.repair_code)
+                    .hint_text(i.snd_repair_placeholder)
+                    .font(egui::TextStyle::Monospace)
+                    .desired_width(f32::INFINITY),
+            );
+            match self.repair_request() {
+                Some(Ok(request)) => {
+                    let Prep::Ready(prepared) = &self.prep else {
+                        return;
+                    };
+                    let full = prepared.symbols(self.preset().symbol_size()) as u64
+                        * (100 + self.preset().repair_pct as u64)
+                        / 100;
+                    let pct = (request.total() as u64 * 100 / full.max(1)) as u32;
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new(fill(i.snd_repair_ok, &[&request.total(), &pct]))
+                            .size(12.0)
+                            .color(t.success),
+                    );
+                }
+                Some(Err(message)) => {
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new(fill(i.snd_repair_invalid, &[&message]))
+                            .size(12.0)
+                            .color(t.error),
+                    );
+                }
+                None => {}
+            }
         });
     }
 

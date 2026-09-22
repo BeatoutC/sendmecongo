@@ -41,6 +41,19 @@ pub struct Manifest {
     pub updated_unix: u64,
 }
 
+/// Per-block source symbol counts for an object, same partition as RFC 6330.
+/// Shared by the progress bookkeeping and the repair code, which both derive
+/// the block count from (F, T) rather than storing it.
+pub fn source_block_sizes(object_len: u64, symbol_size: u16) -> Vec<u32> {
+    let oti = ObjectTransmissionInformation::with_defaults(object_len, symbol_size);
+    let k_total = object_len.div_ceil(symbol_size as u64) as u32;
+    let z = oti.source_blocks() as u32;
+    let (kl, ks, zl, _zs) = partition(k_total, z);
+    (0..z)
+        .map(|sbn| if sbn < zl { kl } else { ks })
+        .collect()
+}
+
 /// In-memory progress: the received-ESI sets plus the merge key.
 #[derive(Debug, Clone, Default)]
 pub struct Progress {
@@ -77,15 +90,10 @@ impl Progress {
 
     /// Per-block (sbn, source_k) derived from the OTI, same partition as RFC 6330.
     pub fn source_blocks(&self) -> Vec<(u8, u32)> {
-        let oti = ObjectTransmissionInformation::with_defaults(self.object_len, self.symbol_size);
-        let k_total = self.object_len.div_ceil(self.symbol_size as u64) as u32;
-        let z = oti.source_blocks() as u32;
-        let (kl, ks, zl, _zs) = partition(k_total, z);
-        (0..z)
-            .map(|sbn| {
-                let k = if sbn < zl { kl } else { ks };
-                (sbn as u8, k)
-            })
+        source_block_sizes(self.object_len, self.symbol_size)
+            .into_iter()
+            .enumerate()
+            .map(|(sbn, k)| (sbn as u8, k))
             .collect()
     }
 
@@ -97,6 +105,30 @@ impl Progress {
             .iter()
             .map(|(sbn, k)| (*k as usize).saturating_sub(self.received_in_block(*sbn)))
             .sum()
+    }
+
+    /// The repair request this progress implies, with the margin already in:
+    /// ceil(shortfall × 1.05) + 8 per block (M2-DESIGN §1.4 — a few seconds of
+    /// extra filming beats a third recording).
+    pub fn repair_request(&self) -> crate::repair_code::RepairRequest {
+        let deficits = self
+            .source_blocks()
+            .iter()
+            .map(|(sbn, k)| {
+                let short = (*k as usize).saturating_sub(self.received_in_block(*sbn));
+                if short == 0 {
+                    0
+                } else {
+                    (short as u64 * 105 / 100 + 8) as u32
+                }
+            })
+            .collect();
+        crate::repair_code::RepairRequest::new(
+            self.session,
+            self.object_len as u32,
+            self.symbol_size,
+            deficits,
+        )
     }
 
     /// Absorb another manifest's symbols. The merge key must match exactly;

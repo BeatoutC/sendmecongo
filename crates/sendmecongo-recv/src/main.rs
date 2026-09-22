@@ -326,6 +326,8 @@ struct PartialReport {
     needed: usize,
     source: usize,
     resumed: Option<(usize, usize)>,
+    /// The full symbol sets, for the window's per-block reception grid (M2.2).
+    progress: Option<Progress>,
     // Raw counters, for the no-progress failure message.
     pictures: usize,
     codes: usize,
@@ -603,6 +605,7 @@ fn execute(
             needed: progress.map_or(0, Progress::needed_estimate),
             source,
             resumed,
+            progress: progress.cloned(),
             pictures: outcome.counters.pictures(),
             codes: outcome.counters.codes(),
             rejected: outcome.counters.rejected(),

@@ -77,12 +77,102 @@ enum Stage {
         started: Instant,
     },
     Done(Box<Report>),
+    /// M2.2: a checkpoint, not a failure — grid of what arrived, what is still
+    /// missing, and the repair code for the sender.
+    Partial(Box<PartialView>),
     Failed {
         /// Set when the failure happened after a recording was chosen, so the
         /// retry button knows what to retry.
         video: Option<PathBuf>,
     },
 }
+
+/// One source block's reception picture, pre-aggregated into display cells so
+/// the per-frame render cost does not scale with the symbol count.
+/// Cell values: 0 = nobody in this bucket arrived, 1 = some did, 2 = all did.
+struct BlockView {
+    sbn: u8,
+    cells: Vec<u8>,
+    got: usize,
+    k: usize,
+}
+
+/// Everything the partial stage draws, computed once at the transition.
+struct PartialView {
+    partial: crate::PartialReport,
+    blocks: Vec<BlockView>,
+    repair_code: String,
+    /// (preset name, seconds) of the fastest matching preset, for the ETA line.
+    eta: Option<(String, f64)>,
+}
+
+/// How many cells a block grid tops out at; each cell then stands for a bucket
+/// of `ceil(symbols / CELLS)` consecutive ESIs.
+const GRID_CELLS: usize = 2048;
+
+impl PartialView {
+    fn build(partial: crate::PartialReport) -> Self {
+        let mut blocks = Vec::new();
+        let mut repair_code = String::new();
+        let mut eta = None;
+        if let Some(progress) = &partial.progress {
+            for (sbn, k) in progress.source_blocks() {
+                let k = k as usize;
+                // Buckets cover every ESI anyone could hold, including repair
+                // symbols beyond K.
+                let mut max_esi = k;
+                for (s, esi) in progress.symbols() {
+                    if s == sbn {
+                        max_esi = max_esi.max(esi as usize + 1);
+                    }
+                }
+                let bucket = max_esi.div_ceil(GRID_CELLS).max(1);
+                let cells_len = max_esi.div_ceil(bucket);
+                let mut filled = vec![0usize; cells_len];
+                let mut got = 0usize;
+                for (s, esi) in progress.symbols() {
+                    if s == sbn {
+                        filled[esi as usize / bucket] += 1;
+                        got += 1;
+                    }
+                }
+                let cells = filled
+                    .iter()
+                    .map(|n| {
+                        if *n == 0 {
+                            0
+                        } else if *n >= bucket {
+                            2
+                        } else {
+                            1
+                        }
+                    })
+                    .collect();
+                blocks.push(BlockView {
+                    sbn,
+                    cells,
+                    got,
+                    k,
+                });
+            }
+            repair_code = progress.repair_request().encode();
+            // The ETA assumes the fastest preset this symbol size could have come
+            // from; it is an expectation, not a promise.
+            eta = sendmecongo_core::preset::ALL
+                .iter()
+                .filter(|p| p.symbol_size() == progress.symbol_size)
+                .max_by(|a, b| a.fps.total_cmp(&b.fps))
+                .map(|p| (p.name.to_string(), partial.needed as f64 / p.fps));
+        }
+        Self {
+            partial,
+            blocks,
+            repair_code,
+            eta,
+        }
+    }
+}
+
 
 struct RecvApp {
     options: Options,
@@ -101,6 +191,8 @@ struct RecvApp {
     /// Substring filter over the candidate list (name and folder), case-insensitive.
     filter: String,
     receiver: Option<mpsc::Receiver<Result<crate::ExecResult, String>>>,
+    /// Set when the repair code was last copied, so the button can say so for a moment.
+    copied_at: Option<Instant>,
     cjk_ok: bool,
     error_text: String,
     /// The language this window last drew itself in; a language picked from the menu bar
@@ -137,6 +229,7 @@ impl RecvApp {
             scan: Some(spawn_scan(folders)),
             filter: String::new(),
             receiver: None,
+            copied_at: None,
             cjk_ok,
             error_text: String::new(),
             lang: i18n::current(),
@@ -175,7 +268,17 @@ impl RecvApp {
         };
 
         let video = video.clone();
-        let options = self.options.clone();
+        let mut options = self.options.clone();
+        // M2.2: a checkpoint named after this recording means "continue where the
+        // last take stopped" — no buttons to find, it just resumes. Camera clip
+        // names are timestamped, so a stale checkpoint from another transfer is
+        // not a realistic collision.
+        if options.resume.is_empty() {
+            let checkpoint = crate::manifest_path_for(&video);
+            if checkpoint.exists() {
+                options.resume.push(checkpoint);
+            }
+        }
         std::thread::spawn(move || {
             let _ = tx.send(execute(&video, &track, &options, &job));
         });
@@ -233,14 +336,17 @@ impl RecvApp {
                     self.receiver = None;
                 }
                 Ok(Ok(crate::ExecResult::Partial(partial))) => {
-                    // M2.1: the checkpoint is already on disk; the per-block
-                    // symbol grid arrives with M2.2. For now the window says
-                    // what the terminal would.
-                    let video = match &self.stage {
-                        Stage::Running { video, .. } => Some(video.clone()),
-                        _ => None,
-                    };
-                    self.fail(partial.message(i18n::t()), video);
+                    if partial.manifest_path.is_some() {
+                        // M2.2: the checkpoint is on disk; show what is missing.
+                        self.stage = Stage::Partial(Box::new(PartialView::build(partial)));
+                    } else {
+                        // No valid frame at all: a plain failure.
+                        let video = match &self.stage {
+                            Stage::Running { video, .. } => Some(video.clone()),
+                            _ => None,
+                        };
+                        self.fail(partial.message(i18n::t()), video);
+                    }
                     self.receiver = None;
                 }
                 Ok(Err(message)) => {
@@ -294,6 +400,7 @@ impl RecvApp {
                 }
             }
             Stage::Done(_) => (i.rcv_status_done.to_string(), t.success),
+            Stage::Partial(_) => (i.rcv_partial_title.to_string(), t.pending),
             Stage::Failed { .. } => (i.rcv_status_failed.to_string(), t.error),
         }
     }
@@ -364,6 +471,7 @@ impl eframe::App for RecvApp {
                     Stage::Choosing => self.ui_choosing(ui, ctx, &t),
                     Stage::Running { .. } => self.ui_running(ui, &t),
                     Stage::Done(_) => self.ui_done(ui, &t),
+                    Stage::Partial(_) => self.ui_partial(ui, &t),
                     Stage::Failed { .. } => self.ui_failed(ui, &t),
                 });
             });
@@ -787,6 +895,157 @@ impl RecvApp {
         });
     }
 
+    /// M2.2: a checkpoint screen — what arrived, what is missing, how long the
+    /// retake is, and the repair code that makes the retake short.
+    fn ui_partial(&mut self, ui: &mut egui::Ui, t: &Theme) {
+        let Stage::Partial(view) = &self.stage else {
+            return;
+        };
+        let i = i18n::t();
+        let received = view.partial.received;
+        let source = view.partial.source.max(1);
+        let needed = view.partial.needed;
+        let fraction = (received as f32 / source as f32).clamp(0.0, 1.0);
+
+        ui.add_space(8.0);
+        ui.vertical_centered(|ui| {
+            theme::badge(ui, t.pending, "!");
+            ui.add_space(6.0);
+            ui.label(
+                egui::RichText::new(i.rcv_partial_title)
+                    .size(17.0)
+                    .strong()
+                    .color(t.text_primary),
+            );
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new(file_name(&view.partial.video))
+                    .size(13.0)
+                    .color(t.text_secondary),
+            );
+        });
+        ui.add_space(12.0);
+
+        ui.add(
+            egui::ProgressBar::new(fraction)
+                .desired_height(8.0)
+                .corner_radius(4.0),
+        );
+        ui.add_space(8.0);
+        ui.label(
+            egui::RichText::new(fill(i.rcv_partial_needed, &[&received, &source, &needed]))
+                .size(14.0)
+                .strong()
+                .color(t.text_primary),
+        );
+        if let Some((preset, secs)) = &view.eta {
+            ui.label(
+                egui::RichText::new(fill(
+                    i.rcv_partial_eta,
+                    &[preset, &human_duration(i, *secs)],
+                ))
+                .size(12.5)
+                .color(t.text_secondary),
+            );
+        }
+        if let Some((symbols, _)) = view.partial.resumed {
+            ui.label(
+                egui::RichText::new(fill(i.rcv_auto_resume, &[&symbols]))
+                    .size(12.0)
+                    .color(t.text_secondary),
+            );
+        }
+        if let Some(path) = &view.partial.manifest_path {
+            ui.label(
+                egui::RichText::new(path.display().to_string())
+                    .size(11.0)
+                    .monospace()
+                    .color(t.text_tertiary),
+            );
+        }
+
+        // The repair code: what the operator carries back to the sender.
+        ui.add_space(14.0);
+        theme::card_edge(t).show(ui, |ui| {
+            ui.label(
+                egui::RichText::new(i.rcv_repair_code)
+                    .size(13.0)
+                    .strong()
+                    .color(t.text_primary),
+            );
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(&view.repair_code)
+                        .size(15.0)
+                        .monospace()
+                        .color(t.text_primary),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let copied = self
+                        .copied_at
+                        .is_some_and(|at| at.elapsed() < Duration::from_secs(2));
+                    let label = if copied { i.rcv_copied } else { i.rcv_copy };
+                    if theme::plain_button(ui, t, label).clicked() {
+                        ui.ctx().copy_text(view.repair_code.clone());
+                        self.copied_at = Some(Instant::now());
+                    }
+                });
+            });
+            ui.add_space(2.0);
+            ui.label(
+                egui::RichText::new(i.rcv_repair_code_hint)
+                    .size(11.5)
+                    .color(t.text_secondary),
+            );
+        });
+
+        // The grid: one card per source block (usually exactly one).
+        ui.add_space(14.0);
+        theme::card_edge(t).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(i.rcv_grid_title)
+                        .size(13.0)
+                        .strong()
+                        .color(t.text_primary),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        egui::RichText::new(i.rcv_grid_legend)
+                            .size(11.0)
+                            .color(t.text_tertiary),
+                    );
+                });
+            });
+            ui.add_space(6.0);
+            for block in &view.blocks {
+                if view.blocks.len() > 1 {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} · {}/{}",
+                            fill(i.rcv_block_label, &[&block.sbn]),
+                            block.got,
+                            block.k
+                        ))
+                        .size(11.5)
+                        .color(t.text_secondary),
+                    );
+                    ui.add_space(2.0);
+                }
+                symbol_grid(ui, t, &block.cells);
+                ui.add_space(4.0);
+            }
+        });
+
+        ui.add_space(16.0);
+        ui.horizontal(|ui| {
+            if theme::plain_button(ui, t, i.rcv_back).clicked() {
+                self.back_to_choices();
+            }
+        });
+    }
+
     fn ui_failed(&mut self, ui: &mut egui::Ui, t: &Theme) {
         let Stage::Failed { video } = &self.stage else {
             return;
@@ -991,5 +1250,38 @@ mod tests {
         assert!(human_advice("只收到 1229 个符号").contains("符号"));
         assert!(human_advice("unsupported codec: av01").contains("细节"));
         assert!(human_advice("无法读取文件").contains("细节"));
+    }
+}
+
+/// The per-block reception grid (M2.2). Each cell is a bucket of consecutive
+/// ESIs: solid green when the whole bucket arrived, amber when some did, an
+/// empty outline when none did. Painted, not widget-per-cell, so a 64 MB
+/// transfer's tens of thousands of symbols cost one draw list.
+fn symbol_grid(ui: &mut egui::Ui, t: &Theme, cells: &[u8]) {
+    const CELL: f32 = 8.0;
+    const GAP: f32 = 2.0;
+    let width = ui.available_width();
+    let cols = ((width + GAP) / (CELL + GAP)).floor().max(1.0) as usize;
+    let rows = cells.len().div_ceil(cols);
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(width, rows as f32 * (CELL + GAP)),
+        egui::Sense::hover(),
+    );
+    let painter = ui.painter_at(rect);
+    for (index, cell) in cells.iter().enumerate() {
+        let col = index % cols;
+        let row = index / cols;
+        let origin = rect.min + egui::vec2(col as f32 * (CELL + GAP), row as f32 * (CELL + GAP));
+        let cell_rect = egui::Rect::from_min_size(origin, egui::vec2(CELL, CELL));
+        match cell {
+            2 => painter.rect_filled(cell_rect, 1.5, t.success),
+            1 => painter.rect_filled(cell_rect, 1.5, t.pending),
+            _ => painter.rect_stroke(
+                cell_rect,
+                1.5,
+                egui::Stroke::new(1.0_f32, t.hairline),
+                egui::StrokeKind::Inside,
+            ),
+        };
     }
 }

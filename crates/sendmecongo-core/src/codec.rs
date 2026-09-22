@@ -54,6 +54,49 @@ impl Sender {
         Ok(Self { frames, cursor: 0 })
     }
 
+    /// Replay-only frame list (M2.3): fresh repair symbols the receiver has never
+    /// seen, one batch per source block, starting right after the repair symbols
+    /// the original broadcast emitted. `repair_pct` must match the original run —
+    /// it decides where "fresh" starts — and `deficits` comes from the receiver's
+    /// repair code. RaptorQ is deterministic, so "the next N repair symbols" is
+    /// the same sequence on both sides.
+    pub fn repair_only(
+        object: &[u8],
+        symbol_size: u16,
+        repair_pct: u32,
+        deficits: &[u32],
+    ) -> Result<Self> {
+        if object.is_empty() {
+            return Err(Error::Truncated);
+        }
+        let oti = ObjectTransmissionInformation::with_defaults(object.len() as u64, symbol_size);
+        let encoder = Encoder::new(object, oti);
+
+        let source_symbols = object.len().div_ceil(symbol_size as usize).max(1);
+        let skip = (source_symbols as u64 * repair_pct as u64 / 100).max(1) as u32;
+        let mut packets = Vec::new();
+        for (sbn, block) in encoder.get_block_encoders().iter().enumerate() {
+            let count = deficits.get(sbn).copied().unwrap_or(0);
+            packets.extend(block.repair_packets(skip, count));
+        }
+        let packets = interleave(packets);
+
+        let session = crate::crc32(object);
+        let mut frames = Vec::with_capacity(packets.len());
+        for packet in &packets {
+            let header = FrameHeader {
+                session,
+                object_len: object.len() as u32,
+                symbol_size,
+                sbn: packet.payload_id().source_block_number(),
+                esi: packet.payload_id().encoding_symbol_id(),
+            };
+            frames.push(frame::build(&header, packet.data()));
+        }
+        Ok(Self { frames, cursor: 0 })
+    }
+
+
     pub fn len(&self) -> usize {
         self.frames.len()
     }
@@ -333,8 +376,59 @@ mod tests {
         assert_eq!(received.expect("re-feed completes").data, data);
     }
 
-    /// Symbols from the same file at a different preset share the session id but
-    /// must be ignored — resuming across presets is rejected, not silently mixed.
+    /// The M2.3 loop end to end: a partial receive produces a repair code, the
+    /// sender replays only fresh repair symbols, and that short second broadcast
+    /// — nothing else — finishes the transfer.
+    #[test]
+    fn a_repair_broadcast_completes_a_partial_transfer() {
+        // Incompressible, so the first 60% of frames is provably short.
+        let mut data = vec![0u8; 100_000];
+        let mut state = 0x2468aceu32;
+        for b in data.iter_mut() {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            *b = (state >> 24) as u8;
+        }
+        let symbol_size = 1000u16;
+        let repair_pct = 20u32;
+        let (comp, payload) = compress::best(&data);
+        let object = container::encode("repair.bin", &data, comp, &payload);
+        let full = Sender::from_object(&object, symbol_size, repair_pct).unwrap();
+
+        // First broadcast: the camera caught 60% of a cycle.
+        let mut receiver = Receiver::new();
+        let caught = full.len() * 60 / 100;
+        for frame in &full.frames()[..caught] {
+            assert!(receiver.push(frame).unwrap().is_none());
+        }
+        let progress = receiver.export_progress().unwrap();
+        assert!(progress.needed_estimate() > 0);
+
+        // The code makes it to the sender by hand.
+        let code = progress.repair_request().encode();
+        let request = crate::repair_code::RepairRequest::decode(&code).unwrap();
+        assert_eq!(request.session, crate::crc32(&object));
+
+        // Second broadcast: only what was missing.
+        let replay =
+            Sender::repair_only(&object, symbol_size, repair_pct, &request.deficits).unwrap();
+        assert!(replay.len() <= request.total() as usize);
+        for frame in replay.frames() {
+            let (header, _) = frame::parse(frame).unwrap();
+            // Fresh repair symbols only: never anything the first broadcast had.
+            let source_k = object.len().div_ceil(symbol_size as usize);
+            assert!(header.esi as usize >= source_k, "esi {}", header.esi);
+        }
+
+        let mut received = None;
+        for frame in replay.frames() {
+            if let Some(r) = receiver.push(frame).unwrap() {
+                received = Some(r);
+                break;
+            }
+        }
+        let received = received.expect("the repair broadcast finishes the job");
+        assert_eq!(received.data, data);
+    }
     #[test]
     fn frames_from_another_preset_are_dropped() {
         let data = vec![7u8; 50_000];

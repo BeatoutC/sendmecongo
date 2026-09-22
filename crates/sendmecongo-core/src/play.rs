@@ -78,7 +78,33 @@ pub fn play(data: &[u8], name: &str, preset: &Preset, opts: &PlayOptions) -> Res
 /// coding is done — which is roughly 65 ms per megabyte.
 pub fn play_object(object: &[u8], preset: &Preset, opts: &PlayOptions) -> Result<PlayStats> {
     let sender = Sender::from_object(object, preset.symbol_size(), preset.repair_pct)?;
-    let frames = sender.frames();
+    play_frames(sender.frames(), object, preset, opts)
+}
+
+/// Replay only the fresh repair symbols a repair code asked for (M2.3). The
+/// window and timing are identical to a full broadcast; the loop is just much
+/// shorter, which is the whole point.
+pub fn play_repair(
+    object: &[u8],
+    preset: &Preset,
+    opts: &PlayOptions,
+    deficits: &[u32],
+) -> Result<PlayStats> {
+    let sender = Sender::repair_only(object, preset.symbol_size(), preset.repair_pct, deficits)?;
+    if sender.is_empty() {
+        return Err(Error::Other(
+            "nothing to replay: the repair code lists no missing symbols".into(),
+        ));
+    }
+    play_frames(sender.frames(), object, preset, opts)
+}
+
+fn play_frames(
+    frames: &[Vec<u8>],
+    object: &[u8],
+    preset: &Preset,
+    opts: &PlayOptions,
+) -> Result<PlayStats> {
     if frames.is_empty() {
         return Err(Error::Other("nothing to play: empty frame list".into()));
     }

@@ -127,6 +127,7 @@ fn run_player(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let mut lanes: Option<usize> = None;
     let mut origin: Option<(isize, isize)> = None;
     let mut borderless = false;
+    let mut repair_code = String::new();
 
     let mut i = 0;
     while i < args.len() {
@@ -170,6 +171,10 @@ fn run_player(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                 borderless = true;
                 i += 1;
             }
+            "--repair-code" => {
+                repair_code = value();
+                i += 2;
+            }
             // Accepted and already applied in `main`; the player's own stderr lines
             // follow the same language as the window that spawned it.
             "--lang" => i += 2,
@@ -192,12 +197,12 @@ fn run_player(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 
     // The GUI compresses once and hands over the finished SMC1 container. Nothing is
     // compressed here, so the window opens as soon as the fountain coding finishes.
-    let stats = if from_stdin {
+    let object = if from_stdin {
         let mut object = Vec::new();
         std::io::stdin().read_to_end(&mut object)?;
         // Fail before opening a window if the pipe carried something else entirely.
         sendmecongo_core::container::peek_name(&object)?;
-        sendmecongo_core::play_object(&object, &preset, &opts)?
+        object
     } else {
         if input.is_empty() {
             return Err("either --in <file> or --object-stdin is required".into());
@@ -208,7 +213,28 @@ fn run_player(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("payload.bin");
-        sendmecongo_core::play(&data, name, &preset, &opts)?
+        let (method, compressed) = sendmecongo_core::compress::best(&data);
+        sendmecongo_core::container::encode(name, &data, method, &compressed)
+    };
+
+    // M2.3 repair broadcast: only the fresh repair symbols the receiver's code
+    // asked for. The code is validated against the container here, before any
+    // window opens — a mistyped code must fail on the terminal, not on air.
+    let stats = if repair_code.is_empty() {
+        sendmecongo_core::play_object(&object, &preset, &opts)?
+    } else {
+        let request = sendmecongo_core::RepairRequest::decode(&repair_code)
+            .map_err(|e| sendmecongo_ui::i18n::fill(sendmecongo_ui::i18n::t().snd_repair_invalid, &[&e]))?;
+        let session_matches = sendmecongo_core::crc32(&object) == request.session;
+        let size_matches = preset.symbol_size() == request.symbol_size
+            && object.len() as u32 == request.object_len;
+        if !session_matches || !size_matches {
+            return Err(sendmecongo_ui::i18n::t()
+                .snd_repair_mismatch
+                .to_string()
+                .into());
+        }
+        sendmecongo_core::play_repair(&object, &preset, &opts, &request.deficits)?
     };
 
     say(format!(

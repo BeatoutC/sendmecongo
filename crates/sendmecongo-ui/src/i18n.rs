@@ -423,6 +423,19 @@ pub struct Text {
     pub snd_status_child_error: &'static str,
     /// `启动播放器失败：{}`.
     pub snd_error_spawn_player: &'static str,
+    // ── Sender: repair broadcast (M2.3) ───────────────────────────────────────
+    /// `补播模式（断点续传）`.
+    pub snd_repair_title: &'static str,
+    /// `贴上接收端给的补播码，播放时就只播缺失的部分`.
+    pub snd_repair_hint: &'static str,
+    /// `SMR1-XXXX-XXXX-…`.
+    pub snd_repair_placeholder: &'static str,
+    /// `匹配：将补播 {} 个符号（约为完整一轮的 {}%）` — symbols, percent.
+    pub snd_repair_ok: &'static str,
+    /// `补播码无效：{}`.
+    pub snd_repair_invalid: &'static str,
+    /// `补播码与当前文件或档位不匹配`.
+    pub snd_repair_mismatch: &'static str,
     /// `找不到自身可执行文件：{}`.
     pub snd_error_self_exe: &'static str,
     pub snd_hint_title: &'static str,
@@ -613,6 +626,29 @@ pub struct Text {
     pub rcv_manifest_saved: &'static str,
     /// `补拍后运行：sendmecongo-recv 新录像.mov --resume {}`.
     pub rcv_partial_hint: &'static str,
+    // ── Receiver: the partial stage (M2.2) ────────────────────────────────────
+    /// `还没收满，进度已保存`.
+    pub rcv_partial_title: &'static str,
+    /// `已收 {} / {} 个不同符号，还差约 {} 个` — received, source, needed.
+    pub rcv_partial_needed: &'static str,
+    /// `按 {} 速率补拍 ≈ {}` — preset name, duration.
+    pub rcv_partial_eta: &'static str,
+    /// `补播码`.
+    pub rcv_repair_code: &'static str,
+    /// `把它誊到发送端的补播输入框，下次就只播缺失的部分`.
+    pub rcv_repair_code_hint: &'static str,
+    pub rcv_copy: &'static str,
+    pub rcv_copied: &'static str,
+    /// `符号接收情况`.
+    pub rcv_grid_title: &'static str,
+    /// `实=已收 空=未收`.
+    pub rcv_grid_legend: &'static str,
+    /// `源块 {}` — sbn.
+    pub rcv_block_label: &'static str,
+    /// `发现同名检查点，已接着上次的 {} 个符号继续`.
+    pub rcv_auto_resume: &'static str,
+    /// `返回`.
+    pub rcv_back: &'static str,
 
     // ── Receiver: the command line ─────────────────────────────────────────────
     pub cli_banner: &'static str,
@@ -721,6 +757,12 @@ mod tests {
             snd_status_player_failed_log,
             snd_status_child_error,
             snd_error_spawn_player,
+            snd_repair_title,
+            snd_repair_hint,
+            snd_repair_placeholder,
+            snd_repair_ok,
+            snd_repair_invalid,
+            snd_repair_mismatch,
             snd_error_self_exe,
             snd_hint_title,
             snd_hint_no_file,
@@ -865,6 +907,18 @@ mod tests {
             rcv_resume_failed,
             rcv_manifest_saved,
             rcv_partial_hint,
+            rcv_partial_title,
+            rcv_partial_needed,
+            rcv_partial_eta,
+            rcv_repair_code,
+            rcv_repair_code_hint,
+            rcv_copy,
+            rcv_copied,
+            rcv_grid_title,
+            rcv_grid_legend,
+            rcv_block_label,
+            rcv_auto_resume,
+            rcv_back,
             cli_banner,
             cli_progress,
             cli_found_videos,

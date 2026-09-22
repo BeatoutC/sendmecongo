@@ -1,7 +1,14 @@
 # M2 设计 — 断点续传 + Agent 技能
 
-状态：方案待审 · 目标版本 v0.5.0
+状态：**M2.1–M2.3 已实现**（v0.5.0-dev），M2.4/M2.5 待做 · 目标版本 v0.5.0
 前置阅读：`docs/PROTOCOL.md`（SMQ1 帧格式与四层校验）
+
+> 进度（2026-09-22）：
+> - ✅ M2.1 core 进度清单 + `--resume`（5da4ec4）
+> - ✅ M2.2 recv GUI Partial 阶段：符号网格、ETA、补播码生成与复制、同名检查点自动续传
+> - ✅ M2.3 补播码（SMR1 base32 + CRC-8）+ send 补播模式（GUI 输入框 + player `--repair-code`）
+> - ⬜ M2.4 Agent CLI 契约 + docs/AGENT.md（`--prepare-only` 等）
+> - ⬜ M2.5 SKILL.md + TESTING.md L5 实机验收
 
 M2 只做两件事，做完即封版：
 
