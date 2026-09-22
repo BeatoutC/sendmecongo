@@ -100,7 +100,7 @@ struct RecvApp {
     scan: Option<mpsc::Receiver<Vec<(PathBuf, u64)>>>,
     /// Substring filter over the candidate list (name and folder), case-insensitive.
     filter: String,
-    receiver: Option<mpsc::Receiver<Result<Report, String>>>,
+    receiver: Option<mpsc::Receiver<Result<crate::ExecResult, String>>>,
     cjk_ok: bool,
     error_text: String,
     /// The language this window last drew itself in; a language picked from the menu bar
@@ -228,8 +228,19 @@ impl RecvApp {
         }
         if let Some(rx) = &self.receiver {
             match rx.try_recv() {
-                Ok(Ok(report)) => {
+                Ok(Ok(crate::ExecResult::Done(report))) => {
                     self.stage = Stage::Done(Box::new(report));
+                    self.receiver = None;
+                }
+                Ok(Ok(crate::ExecResult::Partial(partial))) => {
+                    // M2.1: the checkpoint is already on disk; the per-block
+                    // symbol grid arrives with M2.2. For now the window says
+                    // what the terminal would.
+                    let video = match &self.stage {
+                        Stage::Running { video, .. } => Some(video.clone()),
+                        _ => None,
+                    };
+                    self.fail(partial.message(i18n::t()), video);
                     self.receiver = None;
                 }
                 Ok(Err(message)) => {

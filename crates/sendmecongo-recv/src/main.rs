@@ -20,6 +20,7 @@ mod isobmff;
 mod pipeline;
 mod scan;
 
+use sendmecongo_core::Progress;
 use sendmecongo_ui::i18n::{fill, pad_label, t, Text};
 use pipeline::{Config, CANCELLED};
 use std::fmt::Write as _;
@@ -69,13 +70,22 @@ fn main() -> ExitCode {
     }
 
     match run(&args) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(CliExit::Done) => ExitCode::SUCCESS,
+        // A partial receive is a checkpoint, not a failure — but scripts and
+        // agents still need to tell it apart from a finished file.
+        Ok(CliExit::Partial) => ExitCode::from(2),
         Err(message) => {
             eprintln!();
             eprintln!("{message}");
             ExitCode::FAILURE
         }
     }
+}
+
+/// The two ways a command-line run can end well.
+enum CliExit {
+    Done,
+    Partial,
 }
 
 /// The tag given to `--lang`, if any. Read before anything else so that even an argument
@@ -120,10 +130,10 @@ fn wants_gui_with(args: &[String], from_finder: bool, terminal: bool, no_dialog:
     args.is_empty() && (terminal || cfg!(target_os = "windows"))
 }
 
-fn run(args: &[String]) -> Result<(), String> {
+fn run(args: &[String]) -> Result<CliExit, String> {
     if args.iter().any(|a| a == "-h" || a == "--help") {
         usage();
-        return Ok(());
+        return Ok(CliExit::Done);
     }
     let (options, video) = parse_args(args)?;
 
@@ -131,7 +141,7 @@ fn run(args: &[String]) -> Result<(), String> {
         Some(v) => v,
         None => match choose_interactively()? {
             Some(v) => v,
-            None => return Ok(()),
+            None => return Ok(CliExit::Done),
         },
     };
     recv(&video, &options)
@@ -149,6 +159,7 @@ fn parse_args(args: &[String]) -> Result<(Options, Option<PathBuf>), String> {
             "--compare" => options.compare = Some(PathBuf::from(take(args, &mut index, arg)?)),
             "--dump" => options.dump = Some(PathBuf::from(take(args, &mut index, arg)?)),
             "--json" => options.json = Some(PathBuf::from(take(args, &mut index, arg)?)),
+            "--resume" => options.resume.push(PathBuf::from(take(args, &mut index, arg)?)),
             "--threads" => {
                 let value = take(args, &mut index, arg)?;
                 options.threads = Some(
@@ -191,6 +202,8 @@ struct Options {
     compare: Option<PathBuf>,
     dump: Option<PathBuf>,
     json: Option<PathBuf>,
+    /// Earlier recordings' `.smr.json` manifests, merged before the run (M2).
+    resume: Vec<PathBuf>,
     threads: Option<usize>,
     quiet: bool,
 }
@@ -294,9 +307,169 @@ struct Report {
     symbol_size: u16,
     object_len: u32,
     source_symbols: usize,
+    /// Set when the run started from earlier recordings' manifests:
+    /// (symbols carried in, recordings merged).
+    resumed: Option<(usize, usize)>,
     comparison: Option<Comparison>,
     elapsed_secs: f64,
     throughput: f64,
+}
+
+/// A run that ended short of enough symbols: a checkpoint, not a failure.
+/// Everything needed to resume is on disk at `manifest_path`.
+struct PartialReport {
+    video: PathBuf,
+    /// `None` when no valid frame was ever seen — nothing worth resuming with,
+    /// which *is* a plain failure and gets the old `err_symbols_short` text.
+    manifest_path: Option<PathBuf>,
+    received: usize,
+    needed: usize,
+    source: usize,
+    resumed: Option<(usize, usize)>,
+    // Raw counters, for the no-progress failure message.
+    pictures: usize,
+    codes: usize,
+    rejected: usize,
+    decode_errors: usize,
+}
+
+impl PartialReport {
+    /// The one-message summary, shared by the terminal and the window.
+    fn message(&self, t: &Text) -> String {
+        match &self.manifest_path {
+            Some(path) => {
+                let saved = fill(t.rcv_manifest_saved, &[&path.display()]);
+                let hint = fill(t.rcv_partial_hint, &[&path.display()]);
+                format!("{saved}\n{hint}")
+            }
+            None => fill(
+                t.err_symbols_short,
+                &[
+                    &self.received,
+                    &self.source,
+                    &self.pictures,
+                    &self.codes,
+                    &self.rejected,
+                    &self.decode_errors,
+                ],
+            ),
+        }
+    }
+}
+
+/// What `execute` produced. The window shows both; the command line also maps
+/// them to distinct exit codes (0 done / 2 partial) for scripts and agents.
+enum ExecResult {
+    Done(Report),
+    Partial(PartialReport),
+}
+
+/// Load every `--resume` manifest and merge them into one starting point.
+///
+/// Each checkpoint is two files: `X.smr.json` (the index — merge key, estimates,
+/// recordings list) and `X.smr.bin` (the symbol payloads, same framing as
+/// `--dump`). Both are required: the JSON cannot rebuild the decoder on its own.
+/// Returns the cumulative checkpoint frames and the combined recordings list.
+fn load_resume(paths: &[PathBuf]) -> Result<(Vec<Vec<u8>>, Vec<String>), String> {
+    let mut frames: Vec<Vec<u8>> = Vec::new();
+    let mut recordings = Vec::new();
+    let mut key: Option<(u32, u64, u16)> = None;
+    for path in paths {
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| fill(t().rcv_resume_failed, &[&path.display(), &e]))?;
+        let manifest = Progress::manifest_from_json(&text)
+            .map_err(|e| fill(t().rcv_resume_failed, &[&path.display(), &e]))?;
+        let progress = Progress::from_manifest(&manifest)
+            .map_err(|e| fill(t().rcv_resume_failed, &[&path.display(), &e]))?;
+        // Pre-flight: all checkpoints must belong to the same transfer.
+        let this = (progress.session, progress.object_len, progress.symbol_size);
+        if let Some(previous) = key {
+            if previous != this {
+                return Err(fill(
+                    t().rcv_resume_failed,
+                    &[&path.display(), &"session/object_len/symbol_size 不一致".to_string()],
+                ));
+            }
+        } else {
+            key = Some(this);
+        }
+        let bin = frames_bin_path_for(path);
+        frames.extend(read_frames_bin(&bin)?);
+        recordings.extend(manifest.recordings.clone());
+    }
+    Ok((frames, recordings))
+}
+
+/// Where the checkpoint lives: next to the recording, named after it.
+fn manifest_path_for(video: &Path) -> PathBuf {
+    video.with_extension("smr.json")
+}
+
+/// The payload sidecar of a checkpoint at `manifest` (`X.smr.json` -> `X.smr.bin`).
+fn frames_bin_path_for(manifest: &Path) -> PathBuf {
+    manifest.with_extension("smr.bin")
+}
+
+/// Read `u32-len + frame` sequences — the same framing `--dump` writes.
+fn read_frames_bin(path: &Path) -> Result<Vec<Vec<u8>>, String> {
+    let data = std::fs::read(path)
+        .map_err(|e| fill(t().rcv_resume_failed, &[&path.display(), &e]))?;
+    let mut frames = Vec::new();
+    let mut cursor = 0usize;
+    while cursor + 4 <= data.len() {
+        let len = u32::from_le_bytes(data[cursor..cursor + 4].try_into().unwrap()) as usize;
+        cursor += 4;
+        if cursor + len > data.len() {
+            return Err(fill(
+                t().rcv_resume_failed,
+                &[&path.display(), &"checkpoint truncated".to_string()],
+            ));
+        }
+        frames.push(data[cursor..cursor + len].to_vec());
+        cursor += len;
+    }
+    Ok(frames)
+}
+
+/// Write the `.smr.json` checkpoint and its `.smr.bin` payload sidecar.
+/// `frames` is the *cumulative* distinct set (checkpoint in + this recording's
+/// new symbols) — `pipeline::Outcome::symbols` is exactly that. Returns the
+/// manifest path, or `None` when there is no session state worth keeping.
+fn save_manifest(
+    video: &Path,
+    progress: Option<&Progress>,
+    prior_recordings: &[String],
+    frames: &[Vec<u8>],
+) -> Result<Option<PathBuf>, String> {
+    let Some(progress) = progress else {
+        return Ok(None);
+    };
+    let name = video
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| video.display().to_string());
+    let mut recordings = prior_recordings.to_vec();
+    if !recordings.contains(&name) {
+        recordings.push(name);
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let manifest = progress.to_manifest(recordings, now);
+    let json = Progress::manifest_to_json(&manifest).map_err(|e| e.to_string())?;
+    let path = manifest_path_for(video);
+    std::fs::write(&path, json).map_err(|e| fill(t().rcv_json_failed, &[&e]))?;
+
+    let bin = frames_bin_path_for(&path);
+    let mut payload = Vec::with_capacity(frames.iter().map(|f| f.len() + 4).sum());
+    for frame in frames {
+        payload.extend_from_slice(&(frame.len() as u32).to_le_bytes());
+        payload.extend_from_slice(frame);
+    }
+    std::fs::write(&bin, payload).map_err(|e| fill(t().rcv_dump_failed, &[&e]))?;
+
+    Ok(Some(path))
 }
 
 /// The report rendered as text, in one language.
@@ -388,18 +561,62 @@ fn execute(
     track: &isobmff::VideoTrack,
     options: &Options,
     job: &Job,
-) -> Result<Report, String> {
+) -> Result<ExecResult, String> {
     let threads = options
         .threads
         .unwrap_or_else(pipeline::default_threads)
         .max(1);
-    let mut config = Config::new(threads, options.dump.is_some());
+    let mut config = Config::new(threads);
     config.counters = Arc::clone(&job.counters);
     config.cancel = Arc::clone(&job.cancel);
 
+    // M2 resume: earlier recordings' symbols are the starting point.
+    let mut prior_recordings: Vec<String> = Vec::new();
+    let mut resumed: Option<(usize, usize)> = None;
+    if !options.resume.is_empty() {
+        let (frames, recordings) = load_resume(&options.resume)?;
+        resumed = Some((frames.len(), recordings.len()));
+        config.resume_frames = frames;
+        prior_recordings = recordings;
+    }
+
     let outcome = pipeline::run(video, track, &config, |_| {})?;
 
-    let received = &outcome.received;
+    // Complete or partial, the checkpoint is refreshed so a later run can pick
+    // up exactly where this one stopped.
+    let manifest_path = save_manifest(
+        video,
+        outcome.progress.as_ref(),
+        &prior_recordings,
+        &outcome.symbols,
+    )?;
+
+    let Some(received) = &outcome.received else {
+        let progress = outcome.progress.as_ref();
+        let source = progress
+            .map(|p| p.source_blocks().iter().map(|(_, k)| *k as usize).sum())
+            .unwrap_or(0);
+        let partial = PartialReport {
+            video: video.to_path_buf(),
+            manifest_path: manifest_path.clone(),
+            received: progress.map_or(0, Progress::received),
+            needed: progress.map_or(0, Progress::needed_estimate),
+            source,
+            resumed,
+            pictures: outcome.counters.pictures(),
+            codes: outcome.counters.codes(),
+            rejected: outcome.counters.rejected(),
+            decode_errors: outcome.counters.decode_errors(),
+        };
+        if let (Some(path), Some(progress)) = (&manifest_path, progress) {
+            if let Some(json_path) = &options.json {
+                std::fs::write(json_path, partial_json(&partial, progress, path, &outcome))
+                    .map_err(|e| fill(t().rcv_json_failed, &[&e]))?;
+            }
+        }
+        return Ok(ExecResult::Partial(partial));
+    };
+
     let bytes = received.data.len();
 
     // --- write the file ---------------------------------------------------
@@ -463,6 +680,7 @@ fn execute(
         symbol_size,
         object_len: header.map(|h| h.object_len).unwrap_or(0),
         source_symbols,
+        resumed,
         comparison,
         elapsed_secs,
         throughput: bytes as f64 / elapsed_secs.max(1e-9),
@@ -473,11 +691,11 @@ fn execute(
             .map_err(|e| fill(t().rcv_json_failed, &[&e]))?;
     }
 
-    Ok(report)
+    Ok(ExecResult::Done(report))
 }
 
 /// The command-line run: same job, narrated on the terminal.
-fn recv(video: &Path, options: &Options) -> Result<(), String> {
+fn recv(video: &Path, options: &Options) -> Result<CliExit, String> {
     let interactive = std::io::stderr().is_terminal() && !options.quiet;
     let track = prepare(video)?;
     let facts = TrackFacts::of(&track);
@@ -533,19 +751,50 @@ fn recv(video: &Path, options: &Options) -> Result<(), String> {
 
     // `CANCELLED` is a sentinel the window matches on, not something to read. A person at
     // a terminal gets the sentence.
-    let report = match result {
-        Ok(report) => report,
+    let exec = match result {
+        Ok(exec) => exec,
         Err(message) if message == CANCELLED => return Err(t().err_cancelled.to_string()),
         Err(message) => return Err(message),
     };
-    if !options.quiet {
-        print_report(&report);
-    }
-    let warnings = report.lines(t()).warnings;
-    if warnings.is_empty() {
-        Ok(())
-    } else {
-        Err(warnings.join("\n"))
+    match exec {
+        ExecResult::Done(report) => {
+            if !options.quiet {
+                print_report(&report);
+            }
+            let warnings = report.lines(t()).warnings;
+            if warnings.is_empty() {
+                Ok(CliExit::Done)
+            } else {
+                Err(warnings.join("\n"))
+            }
+        }
+        ExecResult::Partial(partial) => {
+            if partial.manifest_path.is_none() {
+                // No valid frame at all: a plain failure, not a checkpoint.
+                return Err(partial.message(t()));
+            }
+            if !options.quiet {
+                println!();
+                println!("{}{}", pad_label(t().label_video), partial.video.display());
+                if let Some((symbols, recordings)) = partial.resumed {
+                    println!(
+                        "{}{}",
+                        pad_label(t().label_recover),
+                        fill(t().rcv_resume_loaded, &[&symbols, &recordings])
+                    );
+                }
+                println!(
+                    "{}{} / {}  (-{})",
+                    pad_label(t().label_symbols),
+                    partial.received,
+                    partial.source,
+                    partial.needed
+                );
+                println!("{}{}", pad_label(t().label_recover), partial.message(t()));
+                println!();
+            }
+            Ok(CliExit::Partial)
+        }
     }
 }
 
@@ -558,6 +807,13 @@ fn print_report(report: &Report) {
     println!("{}{}", " ".repeat(10), lines.track_summary);
     println!("{}{}", pad_label(t.label_decode), lines.counters);
     println!("{}{}", " ".repeat(10), lines.symbols);
+    if let Some((symbols, recordings)) = report.resumed {
+        println!(
+            "{}{}",
+            " ".repeat(10),
+            fill(t.rcv_resume_loaded, &[&symbols, &recordings])
+        );
+    }
     println!("{}{}", pad_label(t.label_recover), lines.output);
     if let Some(verify) = &lines.verify {
         println!("{}{}", pad_label(t.label_verify), verify);
@@ -645,6 +901,46 @@ fn json(report: &Report, received: &sendmecongo_core::Received, outcome: &pipeli
             None => "null".into(),
         }
     );
+    let _ = writeln!(out, "}}");
+    out
+}
+
+/// The `--json` contract for a partial run (docs/M2-DESIGN §2.2): an agent reads
+/// this and nothing else to decide the next move.
+fn partial_json(
+    partial: &PartialReport,
+    progress: &Progress,
+    manifest: &Path,
+    outcome: &pipeline::Outcome,
+) -> String {
+    let mut out = String::new();
+    let _ = writeln!(out, "{{");
+    let _ = writeln!(out, "  \"tool\": \"sendmecongo-recv\",");
+    let _ = writeln!(
+        out,
+        "  \"input\": {},",
+        quote(&partial.video.to_string_lossy())
+    );
+    let _ = writeln!(out, "  \"result\": \"PARTIAL\",");
+    let _ = writeln!(out, "  \"progress\": {{");
+    let _ = writeln!(out, "    \"session\": \"{:08x}\",", progress.session);
+    let _ = writeln!(out, "    \"object_len\": {},", progress.object_len);
+    let _ = writeln!(out, "    \"symbol_size\": {},", progress.symbol_size);
+    let _ = writeln!(out, "    \"received\": {},", progress.received());
+    let _ = writeln!(out, "    \"source_symbols\": {},", partial.source);
+    let _ = writeln!(out, "    \"needed_estimate\": {},", partial.needed);
+    let _ = writeln!(
+        out,
+        "    \"manifest\": {}",
+        quote(&manifest.to_string_lossy())
+    );
+    let _ = writeln!(out, "  }},");
+    let _ = writeln!(out, "  \"frames_decoded\": {},", outcome.counters.pictures());
+    let _ = writeln!(out, "  \"codes_found\": {},", outcome.counters.codes());
+    let _ = writeln!(out, "  \"symbols_received\": {},", outcome.counters.symbols());
+    let _ = writeln!(out, "  \"rejected_symbols\": {},", outcome.counters.rejected());
+    let _ = writeln!(out, "  \"decode_errors\": {},", outcome.counters.decode_errors());
+    let _ = writeln!(out, "  \"elapsed_sec\": {:.3}", outcome.elapsed.as_secs_f64());
     let _ = writeln!(out, "}}");
     out
 }
@@ -811,6 +1107,76 @@ mod tests {
         list.iter().map(|s| (*s).to_string()).collect()
     }
 
+    /// The checkpoint pair round-trips: JSON index + frame sidecar written by
+    /// `save_manifest` come back through `load_resume` as the same symbol set.
+    #[test]
+    fn a_checkpoint_pair_survives_save_and_load() {
+        use sendmecongo_core::{Receiver, Sender};
+        let dir = std::env::temp_dir().join(format!("smc-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let video = dir.join("第一段.mov");
+        std::fs::write(&video, b"not really a video").unwrap();
+
+        // A first recording that captured part of the stream.
+        let sender = Sender::new("x.bin", &vec![5u8; 40_000], 1000, 20).unwrap();
+        let mut receiver = Receiver::new();
+        let mut frames = Vec::new();
+        for frame in sender.frames().iter().take(30) {
+            receiver.push(frame).unwrap();
+            frames.push(frame.clone());
+        }
+        let progress = receiver.export_progress().unwrap();
+        let manifest = super::save_manifest(&video, Some(&progress), &[], &frames)
+            .unwrap()
+            .expect("a checkpoint was written");
+        assert!(manifest.ends_with("第一段.smr.json"));
+        assert!(super::frames_bin_path_for(&manifest).exists());
+
+        let (loaded_frames, recordings) = super::load_resume(&[manifest.clone()]).unwrap();
+        assert_eq!(loaded_frames, frames);
+        assert_eq!(recordings, vec!["第一段.mov".to_string()]);
+
+        // And the loaded frames rebuild a receiver at exactly the same spot.
+        let mut resumed = Receiver::new();
+        for frame in &loaded_frames {
+            resumed.push(frame).unwrap();
+        }
+        assert_eq!(resumed.frames_used(), receiver.frames_used());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Two checkpoints from different transfers (different symbol sizes) are
+    /// refused at load time, not silently mixed into one decoder.
+    #[test]
+    fn mismatched_checkpoints_are_refused() {
+        use sendmecongo_core::{Receiver, Sender};
+        let dir = std::env::temp_dir().join(format!("smc-test-mm-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let mut manifests = Vec::new();
+        for (name, symbol_size) in [("a.mov", 500u16), ("b.mov", 1000u16)] {
+            let video = dir.join(name);
+            std::fs::write(&video, b"x").unwrap();
+            let sender = Sender::new("same.bin", &vec![1u8; 20_000], symbol_size, 20).unwrap();
+            let mut receiver = Receiver::new();
+            let mut frames = Vec::new();
+            for frame in sender.frames().iter().take(5) {
+                receiver.push(frame).unwrap();
+                frames.push(frame.clone());
+            }
+            let progress = receiver.export_progress().unwrap();
+            manifests.push(
+                super::save_manifest(&video, Some(&progress), &[], &frames)
+                    .unwrap()
+                    .unwrap(),
+            );
+        }
+        assert!(super::load_resume(&manifests).is_err());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     /// A report standing in for "2 MB off a 4K60 recording, verified against the original".
     /// Every field is a number, so `lines` is the only thing that turns it into text.
     fn sample_report(comparison: Option<Comparison>) -> Report {
@@ -835,6 +1201,7 @@ mod tests {
             symbol_size: 1710,
             object_len: 2_097_152,
             source_symbols: 1227,
+            resumed: None,
             comparison,
             elapsed_secs: 64.6,
             throughput: 32_464.0,

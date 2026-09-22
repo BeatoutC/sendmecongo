@@ -21,7 +21,7 @@
 use crate::decode::VideoDecoder;
 use crate::isobmff::{self, VideoTrack, START_CODE};
 use crate::scan::Scanner;
-use sendmecongo_core::{FrameHeader, Received, Receiver};
+use sendmecongo_core::{FrameHeader, Progress, Received, Receiver};
 use std::collections::{HashSet, VecDeque};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -99,9 +99,11 @@ impl Counters {
 
 pub struct Config {
     pub threads: usize,
-    /// Keep the distinct SMQ frames around so they can be dumped for the
-    /// independent `sendmecongo-bench decode` cross-check.
-    pub keep_symbols: bool,
+    /// Checkpoint frames from earlier recordings (M2 resumable transfer): the
+    /// collector is seeded with them before the video is even opened, because
+    /// the RaptorQ decoder can only be rebuilt from the symbol payloads
+    /// themselves — an index of which symbols arrived is not enough.
+    pub resume_frames: Vec<Vec<u8>>,
     /// Shared with whoever is watching. A GUI reads these every frame; the CLI
     /// prints from them inside `run`'s progress callback.
     pub counters: Arc<Counters>,
@@ -111,10 +113,10 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new(threads: usize, keep_symbols: bool) -> Self {
+    pub fn new(threads: usize) -> Self {
         Self {
             threads,
-            keep_symbols,
+            resume_frames: Vec::new(),
             counters: Arc::new(Counters::default()),
             cancel: Arc::new(AtomicBool::new(false)),
         }
@@ -128,7 +130,12 @@ impl Config {
 pub const CANCELLED: &str = "__cancelled__";
 
 pub struct Outcome {
-    pub received: Received,
+    /// `None` when the recording ended (or was drained) before enough distinct
+    /// symbols arrived — the partial state is in `progress` and can be resumed.
+    pub received: Option<Received>,
+    /// Everything a later run needs to pick up where this one stopped. `None`
+    /// only when no valid frame was ever seen (nothing worth resuming with).
+    pub progress: Option<Progress>,
     pub counters: Arc<Counters>,
     pub elapsed: Duration,
     pub first_header: Option<FrameHeader>,
@@ -364,134 +371,152 @@ pub fn run(
     let started = Instant::now();
     let counters = Arc::clone(&config.counters);
     counters.total.store(track.samples.len(), Ordering::Relaxed);
-    let queue = Arc::new(Queue::new(config.threads.max(1) * 2));
-    let (symbol_tx, symbol_rx) = mpsc::channel::<Vec<u8>>();
 
-    for _ in 0..config.threads.max(1) {
-        spawn_worker(
-            track.codec,
-            Arc::clone(&queue),
-            symbol_tx.clone(),
-            Arc::clone(&counters),
-        );
-    }
-    drop(symbol_tx);
-
-    let producer_queue = Arc::clone(&queue);
-    let producer_counters = Arc::clone(&counters);
-    let producer_path = path.to_path_buf();
-    let producer_codec = track.codec;
-    let parameter_sets = track.parameter_sets.clone();
-    let nal_length_size = track.nal_length_size;
-    let producer_samples = track.samples.clone();
-
-    let producer = std::thread::spawn(move || {
-        // A private view of the track so the thread owns everything it touches.
-        let track = VideoTrack {
-            codec: producer_codec,
-            parameter_sets,
-            nal_length_size,
-            width: 0,
-            height: 0,
-            timescale: 0,
-            duration: 0,
-            samples: producer_samples,
-        };
-        if let Err(e) = spawn_producer(&producer_path, &track, producer_queue, producer_counters) {
-            eprintln!(
-                "{}",
-                sendmecongo_ui::i18n::fill(sendmecongo_ui::i18n::t().cli_producer_failed, &[&e])
-            );
-        }
-    });
-
+    // M2 resume: re-feed the checkpoint frames *before* opening the video. The
+    // decoder comes back exactly where the last recording left it — and a
+    // checkpoint that is already complete finishes without touching the file.
     let mut receiver = Receiver::new();
     let mut received = None;
     let mut first_header: Option<FrameHeader> = None;
     let mut kept: Vec<Vec<u8>> = Vec::new();
     let mut seen: HashSet<(u8, u32)> = HashSet::new();
-    let mut last_tick = Instant::now();
-
-    loop {
-        let payload = match symbol_rx.recv_timeout(Duration::from_millis(100)) {
-            Ok(payload) => payload,
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                // Polling rather than blocking is what makes "停止" possible: the
-                // collector is the only thread that knows the job is over, and it
-                // must be able to notice a cancel that arrives while no symbols
-                // are coming through at all.
-                if config.cancel.load(Ordering::Relaxed) {
-                    break;
-                }
-                continue;
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
-        };
-        counters.symbols.fetch_add(1, Ordering::Relaxed);
-
-        if let Ok((header, _)) = sendmecongo_core::frame::parse(&payload) {
+    for payload in &config.resume_frames {
+        if let Ok((header, _)) = sendmecongo_core::frame::parse(payload) {
             if first_header.is_none() {
                 first_header = Some(header);
-                // K: exactly how many distinct symbols the object is made of, so
-                // the progress bar has a real denominator from the first frame on.
                 let symbols = header.object_len.div_ceil(header.symbol_size as u32) as usize;
                 counters.target.store(symbols, Ordering::Relaxed);
             }
-            if config.keep_symbols && seen.insert((header.sbn, header.esi)) {
-                kept.push(payload.clone());
-            }
+            seen.insert((header.sbn, header.esi));
+            kept.push(payload.clone());
         }
-
-        if received.is_some() {
-            continue; // keep draining so nobody blocks on a full channel
-        }
-        match receiver.push(&payload) {
+        match receiver.push(payload) {
             Ok(Some(done)) => {
                 received = Some(done);
-                queue.stop();
+                break;
             }
             Ok(None) => {}
             Err(_) => {
                 counters.rejected.fetch_add(1, Ordering::Relaxed);
             }
         }
-        counters
-            .unique
-            .store(receiver.frames_used(), Ordering::Relaxed);
+    }
+    counters.unique.store(receiver.frames_used(), Ordering::Relaxed);
 
-        if last_tick.elapsed() >= Duration::from_millis(250) {
-            last_tick = Instant::now();
-            progress(&counters);
+    if received.is_none() {
+        let queue = Arc::new(Queue::new(config.threads.max(1) * 2));
+        let (symbol_tx, symbol_rx) = mpsc::channel::<Vec<u8>>();
+
+        for _ in 0..config.threads.max(1) {
+            spawn_worker(
+                track.codec,
+                Arc::clone(&queue),
+                symbol_tx.clone(),
+                Arc::clone(&counters),
+            );
         }
+        drop(symbol_tx);
+
+        let producer_queue = Arc::clone(&queue);
+        let producer_counters = Arc::clone(&counters);
+        let producer_path = path.to_path_buf();
+        let producer_codec = track.codec;
+        let parameter_sets = track.parameter_sets.clone();
+        let nal_length_size = track.nal_length_size;
+        let producer_samples = track.samples.clone();
+
+        let producer = std::thread::spawn(move || {
+            // A private view of the track so the thread owns everything it touches.
+            let track = VideoTrack {
+                codec: producer_codec,
+                parameter_sets,
+                nal_length_size,
+                width: 0,
+                height: 0,
+                timescale: 0,
+                duration: 0,
+                samples: producer_samples,
+            };
+            if let Err(e) =
+                spawn_producer(&producer_path, &track, producer_queue, producer_counters)
+            {
+                eprintln!(
+                    "{}",
+                    sendmecongo_ui::i18n::fill(sendmecongo_ui::i18n::t().cli_producer_failed, &[&e])
+                );
+            }
+        });
+
+        let mut last_tick = Instant::now();
+
+        loop {
+            let payload = match symbol_rx.recv_timeout(Duration::from_millis(100)) {
+                Ok(payload) => payload,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    // Polling rather than blocking is what makes "停止" possible: the
+                    // collector is the only thread that knows the job is over, and it
+                    // must be able to notice a cancel that arrives while no symbols
+                    // are coming through at all.
+                    if config.cancel.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    continue;
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            };
+            counters.symbols.fetch_add(1, Ordering::Relaxed);
+
+            if let Ok((header, _)) = sendmecongo_core::frame::parse(&payload) {
+                if first_header.is_none() {
+                    first_header = Some(header);
+                    // K: exactly how many distinct symbols the object is made of, so
+                    // the progress bar has a real denominator from the first frame on.
+                    let symbols = header.object_len.div_ceil(header.symbol_size as u32) as usize;
+                    counters.target.store(symbols, Ordering::Relaxed);
+                }
+                if seen.insert((header.sbn, header.esi)) {
+                    kept.push(payload.clone());
+                }
+            }
+
+            if received.is_some() {
+                continue; // keep draining so nobody blocks on a full channel
+            }
+            match receiver.push(&payload) {
+                Ok(Some(done)) => {
+                    received = Some(done);
+                    queue.stop();
+                }
+                Ok(None) => {}
+                Err(_) => {
+                    counters.rejected.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+            counters
+                .unique
+                .store(receiver.frames_used(), Ordering::Relaxed);
+
+            if last_tick.elapsed() >= Duration::from_millis(250) {
+                last_tick = Instant::now();
+                progress(&counters);
+            }
+        }
+
+        queue.stop();
+        let _ = producer.join();
     }
 
-    queue.stop();
-    let _ = producer.join();
+    if received.is_none() && config.cancel.load(Ordering::Relaxed) {
+        return Err(CANCELLED.into());
+    }
 
-    let Some(received) = received else {
-        let unique = receiver.frames_used();
-        if config.cancel.load(Ordering::Relaxed) {
-            return Err(CANCELLED.into());
-        }
-        let t = sendmecongo_ui::i18n::t();
-        let source = first_header
-            .map(|h| h.object_len.div_ceil(h.symbol_size as u32) as usize)
-            .unwrap_or(0);
-        return Err(sendmecongo_ui::i18n::fill(
-            t.err_symbols_short,
-            &[
-                &unique,
-                &source,
-                &counters.pictures(),
-                &counters.codes(),
-                &counters.rejected(),
-                &counters.decode_errors(),
-            ],
-        ));
-    };
+    // Complete or not, whatever the collector holds is the resumable state:
+    // a partial run is a checkpoint, not a failure (M2-DESIGN §1.1).
+    let progress = receiver.export_progress();
 
     Ok(Outcome {
         received,
+        progress,
         counters,
         elapsed: started.elapsed(),
         first_header,

@@ -4,6 +4,7 @@
 //! Receiver: accepts frames in any order, dedupes by (sbn, esi), decodes when it has enough.
 
 use crate::frame::{self, FrameHeader};
+use crate::progress::Progress;
 use crate::{compress, container, Error, Result};
 use raptorq::{Decoder, Encoder, EncodingPacket, ObjectTransmissionInformation, PayloadId};
 use std::collections::{BTreeMap, HashSet};
@@ -112,6 +113,10 @@ pub struct Received {
 pub struct Receiver {
     decoder: Option<Decoder>,
     session: Option<u32>,
+    /// OTI fields remembered at session establishment so progress can be
+    /// exported without poking the decoder's private state.
+    object_len: u64,
+    symbol_size: u16,
     seen: HashSet<(u8, u32)>,
     frames_used: usize,
     duplicates: usize,
@@ -129,11 +134,28 @@ impl Receiver {
         Self {
             decoder: None,
             session: None,
+            object_len: 0,
+            symbol_size: 0,
             seen: HashSet::new(),
             frames_used: 0,
             duplicates: 0,
             done: false,
         }
+    }
+
+    /// Snapshot of everything a later session needs to resume. `None` until the
+    /// first valid frame has established the session.
+    ///
+    /// Note this is only the *index*: resuming additionally requires the symbol
+    /// payloads themselves (the `.smr.bin` sidecar), which are re-fed through
+    /// `push` to rebuild the decoder. ESI sets alone cannot rebuild it.
+    pub fn export_progress(&self) -> Option<Progress> {
+        let session = self.session?;
+        let mut progress = Progress::new(session, self.object_len, self.symbol_size);
+        for (sbn, esi) in &self.seen {
+            progress.record(*sbn, *esi);
+        }
+        Some(progress)
     }
 
     pub fn frames_used(&self) -> usize {
@@ -164,8 +186,18 @@ impl Receiver {
                 );
                 self.decoder = Some(Decoder::new(oti));
                 self.session = Some(header.session);
+                self.object_len = header.object_len as u64;
+                self.symbol_size = header.symbol_size;
             }
-            Some(session) if session != header.session => return Ok(None),
+            // Same container re-encoded at a different preset shares the session
+            // id but not the symbol stream; those frames must not be merged in.
+            Some(session)
+                if session != header.session
+                    || self.object_len != header.object_len as u64
+                    || self.symbol_size != header.symbol_size =>
+            {
+                return Ok(None);
+            }
             Some(_) => {}
         }
 
@@ -220,5 +252,101 @@ mod tests {
     #[test]
     fn an_empty_object_is_refused_instead_of_panicking() {
         assert!(Sender::from_object(&[], 1000, 20).is_err());
+    }
+
+    /// The M2.1 core loop: first recording gets part of the frames, its symbols
+    /// are checkpointed, and a fresh receiver is *re-fed* the checkpoint before
+    /// the second recording's frames — finishing exactly where the first stopped.
+    ///
+    /// Re-feeding is the only correct resume: the RaptorQ decoder needs the
+    /// symbol payloads, an ESI set alone cannot rebuild it.
+    #[test]
+    fn a_receiver_resumes_by_refed_checkpoint_frames() {
+        // Incompressible data so K tracks the raw size and the first half alone
+        // is provably short of finishing.
+        let mut data = vec![0u8; 200_000];
+        let mut state = 0x12345678u32;
+        for b in data.iter_mut() {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            *b = (state >> 24) as u8;
+        }
+        let sender = Sender::new("resume.bin", &data, 1000, 20).unwrap();
+        let frames = sender.frames();
+        let half = frames.len() / 2;
+
+        let mut first = Receiver::new();
+        for frame in &frames[..half] {
+            assert!(first.push(frame).unwrap().is_none());
+        }
+        let progress = first.export_progress().expect("session established");
+        assert_eq!(progress.received(), first.frames_used());
+
+        // Checkpoint = the frames themselves (`.smr.bin`) + the index (`.smr.json`).
+        let checkpoint: Vec<Vec<u8>> = frames[..half].to_vec();
+        let manifest = progress.to_manifest(vec!["part1.mov".into()], 0);
+        let json = Progress::manifest_to_json(&manifest).unwrap();
+        let restored = Progress::from_manifest(&Progress::manifest_from_json(&json).unwrap()).unwrap();
+        assert_eq!(restored.received(), progress.received());
+
+        let mut second = Receiver::new();
+        for frame in &checkpoint {
+            assert!(second.push(frame).unwrap().is_none());
+        }
+        assert_eq!(second.frames_used(), first.frames_used());
+
+        let mut received = None;
+        for frame in &frames[half..] {
+            if let Some(r) = second.push(frame).unwrap() {
+                received = Some(r);
+                break;
+            }
+        }
+        let received = received.expect("second half completes the object");
+        assert_eq!(received.name, "resume.bin");
+        assert_eq!(received.data, data);
+        // The second recording's own duplicates must not be counted as new.
+        assert!(received.frames_used < frames.len());
+    }
+
+    /// A checkpoint that already holds enough symbols completes on re-feed alone,
+    /// without touching a new recording.
+    #[test]
+    fn a_complete_checkpoint_finishes_on_refeed() {
+        let data = vec![9u8; 30_000];
+        let sender = Sender::new("done.bin", &data, 1000, 20).unwrap();
+        let mut first = Receiver::new();
+        let mut checkpoint = Vec::new();
+        for frame in sender.frames() {
+            checkpoint.push(frame.clone());
+            if first.push(frame).unwrap().is_some() {
+                break;
+            }
+        }
+        let mut second = Receiver::new();
+        let mut received = None;
+        for frame in &checkpoint {
+            if let Some(r) = second.push(frame).unwrap() {
+                received = Some(r);
+                break;
+            }
+        }
+        assert_eq!(received.expect("re-feed completes").data, data);
+    }
+
+    /// Symbols from the same file at a different preset share the session id but
+    /// must be ignored — resuming across presets is rejected, not silently mixed.
+    #[test]
+    fn frames_from_another_preset_are_dropped() {
+        let data = vec![7u8; 50_000];
+        let coarse = Sender::new("x.bin", &data, 500, 20).unwrap();
+        let fine = Sender::new("x.bin", &data, 1000, 20).unwrap();
+
+        let mut rx = Receiver::new();
+        rx.push(&coarse.frames()[0]).unwrap();
+        let before = rx.frames_used();
+        for frame in fine.frames().iter().take(5) {
+            rx.push(frame).unwrap();
+        }
+        assert_eq!(rx.frames_used(), before);
     }
 }

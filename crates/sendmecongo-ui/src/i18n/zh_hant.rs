@@ -207,6 +207,10 @@ pub static TEXT: Text = Text {
     rcv_read_failed: "讀取 {} 失敗：{}",
     rcv_dump_failed: "寫入符號 dump 失敗：{}",
     rcv_json_failed: "寫入 JSON 失敗：{}",
+    rcv_resume_loaded: "已載入續傳進度：{} 個不同符號（來自 {} 段錄影）",
+    rcv_resume_failed: "無法讀取進度清單 {}：{}",
+    rcv_manifest_saved: "續傳進度已儲存：{}",
+    rcv_partial_hint: "補拍缺少的部分後，接著上次繼續：\n  sendmecongo-recv 新錄影.mov --resume {}",
 
     // ── Receiver: the command line ─────────────────────────────────────────────
     cli_banner: "sendmecongo-recv — 從錄影還原檔案",
@@ -229,6 +233,7 @@ pub static TEXT: Text = Text {
         "    --compare <原檔>    還原後和原檔逐位元組比對\n",
         "    --dump <檔案>       匯出收到的符號，供 sendmecongo-bench decode 獨立複核\n",
         "    --json <檔案>       寫出機器可讀的統計\n",
+        "    --resume <清單>     載入上次沒拍完時的 .smr.json 進度接著收（可重複多次）\n",
         "    --threads <N>       平行解碼執行緒數（預設按 CPU 核心數自動定）\n",
         "    --lang <代碼>       介面語言：zh-Hans / zh-Hant / en（預設跟隨系統）\n",
         "    --quiet, -q         不列印進度和報告\n",

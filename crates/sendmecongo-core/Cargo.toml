@@ -13,4 +13,6 @@ image = "0.25"
 minifb = "0.27"
 qrcode = "0.14"
 raptorq = "2.0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 thiserror = "1"

@@ -605,6 +605,14 @@ pub struct Text {
     pub rcv_dump_failed: &'static str,
     /// `写入 JSON 失败：{}`.
     pub rcv_json_failed: &'static str,
+    /// `已载入续传进度：{} 个不同符号（来自 {} 段录像）` — symbols, recordings.
+    pub rcv_resume_loaded: &'static str,
+    /// `无法读取进度清单 {}：{}` — path, error.
+    pub rcv_resume_failed: &'static str,
+    /// `续传进度已保存：{}`.
+    pub rcv_manifest_saved: &'static str,
+    /// `补拍后运行：sendmecongo-recv 新录像.mov --resume {}`.
+    pub rcv_partial_hint: &'static str,
 
     // ── Receiver: the command line ─────────────────────────────────────────────
     pub cli_banner: &'static str,
@@ -853,6 +861,10 @@ mod tests {
             rcv_read_failed,
             rcv_dump_failed,
             rcv_json_failed,
+            rcv_resume_loaded,
+            rcv_resume_failed,
+            rcv_manifest_saved,
+            rcv_partial_hint,
             cli_banner,
             cli_progress,
             cli_found_videos,

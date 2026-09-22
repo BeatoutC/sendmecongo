@@ -13,12 +13,14 @@ pub mod container;
 pub mod frame;
 pub mod play;
 pub mod preset;
+pub mod progress;
 pub mod qr;
 
 pub use codec::{Received, Receiver, Sender};
 pub use container::Container;
 pub use frame::FrameHeader;
 pub use play::{play, play_object, PlayOptions, PlayStats};
+pub use progress::{Manifest, Progress};
 
 use thiserror::Error;
 
@@ -44,6 +46,8 @@ pub enum Error {
     BadName,
     #[error("cancelled")]
     Cancelled,
+    #[error("resume manifest rejected: {0}")]
+    ResumeMismatch(String),
     #[error("{0}")]
     Other(String),
 }

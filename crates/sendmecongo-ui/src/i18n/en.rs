@@ -221,6 +221,10 @@ pub static TEXT: Text = Text {
     rcv_read_failed: "Could not read {}: {}",
     rcv_dump_failed: "Could not write the symbol dump: {}",
     rcv_json_failed: "Could not write the JSON: {}",
+    rcv_resume_loaded: "Resume progress loaded: {} distinct symbols (from {} recordings)",
+    rcv_resume_failed: "Could not read the progress manifest {}: {}",
+    rcv_manifest_saved: "Resume progress saved: {}",
+    rcv_partial_hint: "After filming the missing part, pick up where you left off:\n  sendmecongo-recv new-recording.mov --resume {}",
 
     // ── Receiver: the command line ─────────────────────────────────────────────
     cli_banner: "sendmecongo-recv — recover a file from a recording",
@@ -245,6 +249,7 @@ pub static TEXT: Text = Text {
         "    --dump <file>       export the symbols received, for an independent\n",
         "                        `sendmecongo-bench decode` cross-check\n",
         "    --json <file>       write machine-readable statistics\n",
+        "    --resume <manifest> pick up an earlier .smr.json checkpoint (repeatable)\n",
         "    --threads <N>       decode threads (default: derived from the CPU core count)\n",
         "    --lang <code>       interface language: zh-Hans / zh-Hant / en (default: the locale)\n",
         "    --quiet, -q         print no progress and no report\n",
