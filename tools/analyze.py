@@ -29,7 +29,7 @@ CRC_LEN = 4
 
 def parse_header(data: bytes):
     """Return (session, object_len, symbol_size, sbn, esi) or None."""
-    if len(data) < HEADER_LEN + CRC_LEN or data[:3] != MAGIC:
+    if len(data) < HEADER_LEN + CRC_LEN or (data[:3] != MAGIC and data[:3] != b"AGQ"):
         return None
     session, object_len = struct.unpack_from("<II", data, 4)
     symbol_size = struct.unpack_from("<H", data, 12)[0]

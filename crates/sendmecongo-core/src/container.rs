@@ -15,6 +15,8 @@
 use crate::{Error, Result};
 
 pub const MAGIC: [u8; 4] = *b"SMC1";
+/// Legacy container magic used prior to v0.4.1 renaming.
+pub const LEGACY_MAGIC: [u8; 4] = *b"AGC1";
 pub const VERSION: u8 = 1;
 pub const COMP_RAW: u8 = 0;
 pub const COMP_GZIP: u8 = 1;
@@ -51,7 +53,7 @@ fn header(bytes: &[u8]) -> Result<(std::ops::Range<usize>, usize)> {
     if bytes.len() < FIXED {
         return Err(Error::Truncated);
     }
-    if bytes[0..4] != MAGIC {
+    if bytes[0..4] != MAGIC && bytes[0..4] != LEGACY_MAGIC {
         return Err(Error::BadMagic);
     }
     if bytes[4] != VERSION {

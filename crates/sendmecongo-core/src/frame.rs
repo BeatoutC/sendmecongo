@@ -17,6 +17,8 @@
 use crate::{Error, Result};
 
 pub const MAGIC: [u8; 3] = *b"SMQ";
+/// Legacy magic used in recordings prior to v0.4.1 renaming.
+pub const LEGACY_MAGIC: [u8; 3] = *b"AGQ";
 pub const PROTO_VERSION: u8 = 1;
 pub const HEADER_LEN: usize = 18;
 pub const CRC_LEN: usize = 4;
@@ -48,7 +50,7 @@ impl FrameHeader {
         if body.len() < HEADER_LEN {
             return Err(Error::Truncated);
         }
-        if body[0..3] != MAGIC {
+        if body[0..3] != MAGIC && body[0..3] != LEGACY_MAGIC {
             return Err(Error::BadMagic);
         }
         if body[3] != PROTO_VERSION {

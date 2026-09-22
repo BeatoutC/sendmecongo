@@ -151,7 +151,8 @@ impl Scanner {
 fn agq_payload(result: &RXingResult) -> Option<Vec<u8>> {
     let bytes = result.getRawBytes();
     if bytes.len() > sendmecongo_core::frame::HEADER_LEN
-        && bytes.starts_with(&sendmecongo_core::frame::MAGIC)
+        && (bytes.starts_with(&sendmecongo_core::frame::MAGIC)
+            || bytes.starts_with(&sendmecongo_core::frame::LEGACY_MAGIC))
     {
         Some(bytes.to_vec())
     } else {

@@ -1,14 +1,14 @@
 # M2 设计 — 断点续传 + Agent 技能
 
-状态：**M2.1–M2.3 已实现**（v0.5.0-dev），M2.4/M2.5 待做 · 目标版本 v0.5.0
+状态：**M2.1–M2.5 已全部实现并完成验收**（v0.5.0）
 前置阅读：`docs/PROTOCOL.md`（SMQ1 帧格式与四层校验）
 
 > 进度（2026-09-22）：
 > - ✅ M2.1 core 进度清单 + `--resume`（5da4ec4）
-> - ✅ M2.2 recv GUI Partial 阶段：符号网格、ETA、补播码生成与复制、同名检查点自动续传
+> - ✅ M2.2 recv GUI Partial 阶段：符号网格、ETA、补播码生成与复制、同名检查点自动续传（0d26868）
 > - ✅ M2.3 补播码（SMR1 base32 + CRC-8）+ send 补播模式（GUI 输入框 + player `--repair-code`）
-> - ⬜ M2.4 Agent CLI 契约 + docs/AGENT.md（`--prepare-only` 等）
-> - ⬜ M2.5 SKILL.md + TESTING.md L5 实机验收
+> - ✅ M2.4 Agent CLI 契约 + `docs/AGENT.md`（`--prepare-only`、`--play` 任意位置、别名兼容与 `--json` 契约对齐）
+> - ✅ M2.5 `skills/sendmecongo/SKILL.md` + `docs/TESTING.md` L5 验收用例与真机录像闭环验收（06.MOV 欠收检查点 + 07.MOV `--resume` 9.4s 收满 IDENTICAL ✓）
 
 M2 只做两件事，做完即封版：
 
@@ -196,16 +196,15 @@ JSON 输出契约（recv，节选）：
 
 ## 3. 里程碑拆分
 
-| 里程碑 | 内容 | 复杂度 | 验收 |
-|---|---|---|---|
-| M2.1 | core `Progress` 导入导出 + recv `--resume` + 清单落盘 | 中 | 两段拍摄合并收满（CLI 层） |
-| M2.2 | recv GUI 符号网格 + 进度/ETA + 补播码生成 | 中 | 人工目检 + L5 用例上半 |
-| M2.3 | 补播码解析 + send 补播模式（GUI+CLI） | 中 | L5 端到端：补播短循环收满 |
-| M2.4 | send/recv CLI 面补齐 + JSON 契约 + `docs/AGENT.md` | 低 | 契约示例全部可跑通 |
-| M2.5 | `skills/sendmecongo/SKILL.md` + TESTING.md L5 + 实机验收 | 低 | agent 一句提示词走通全流程 |
+| 里程碑 | 内容 | 复杂度 | 验收 | 状态 |
+|---|---|---|---|---|
+| M2.1 | core `Progress` 导入导出 + recv `--resume` + 清单落盘 | 中 | 两段拍摄合并收满（CLI 层） | ✅ 完成 (5da4ec4) |
+| M2.2 | recv GUI 符号网格 + 进度/ETA + 补播码生成 | 中 | 人工目检 + L5 用例上半 | ✅ 完成 (0d26868) |
+| M2.3 | 补播码解析 + send 补播模式（GUI+CLI） | 中 | L5 端到端：补播短循环收满 | ✅ 完成 (0d26868) |
+| M2.4 | send/recv CLI 面补齐 + JSON 契约 + `docs/AGENT.md` | 低 | 契约示例全部可跑通 | ✅ 完成 (v0.5.0) |
+| M2.5 | `skills/sendmecongo/SKILL.md` + TESTING.md L5 + 实机验收 | 低 | agent 一句提示词走通全流程 | ✅ 完成 (v0.5.0) |
 
-依赖序：M2.1 → (M2.2 ∥ M2.4) → M2.3 → M2.5。
-建议 M2.1 先单独合入发 v0.5.0-alpha，因为"跨拍摄合并"本身就已兑现断点续传的核心价值。
+依赖序已全部满足并闭环：M2.1 → M2.2 → M2.3 → M2.4 → M2.5。全套 99 个单元测试与 L5 实机断点合并验收全部通过。
 
 ## 4. 明确排除（M2 不做）
 

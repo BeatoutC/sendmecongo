@@ -409,7 +409,15 @@ fn manifest_path_for(video: &Path) -> PathBuf {
 
 /// The payload sidecar of a checkpoint at `manifest` (`X.smr.json` -> `X.smr.bin`).
 fn frames_bin_path_for(manifest: &Path) -> PathBuf {
-    manifest.with_extension("smr.bin")
+    let clean = manifest.with_extension("bin");
+    if clean.exists() {
+        return clean;
+    }
+    let fallback = manifest.with_extension("smr.bin");
+    if fallback.exists() {
+        return fallback;
+    }
+    clean
 }
 
 /// Read `u32-len + frame` sequences — the same framing `--dump` writes.
@@ -836,13 +844,19 @@ fn json(report: &Report, received: &sendmecongo_core::Received, outcome: &pipeli
     let mut out = String::new();
     let _ = writeln!(out, "{{");
     let _ = writeln!(out, "  \"tool\": \"sendmecongo-recv\",");
+    let _ = writeln!(out, "  \"status\": \"done\",");
+    let _ = writeln!(out, "  \"result\": \"COMPLETE\",");
+    let _ = writeln!(
+        out,
+        "  \"received_file\": {},",
+        quote(&report.target.to_string_lossy())
+    );
     let _ = writeln!(
         out,
         "  \"input\": {},",
         quote(&report.video.to_string_lossy())
     );
     let _ = writeln!(out, "  \"output\": {},", quote(&lines.output));
-    let _ = writeln!(out, "  \"result\": \"COMPLETE\",");
     let _ = writeln!(out, "  \"bytes\": {},", received.data.len());
     let _ = writeln!(
         out,
@@ -919,12 +933,19 @@ fn partial_json(
     let mut out = String::new();
     let _ = writeln!(out, "{{");
     let _ = writeln!(out, "  \"tool\": \"sendmecongo-recv\",");
+    let _ = writeln!(out, "  \"status\": \"partial\",");
+    let _ = writeln!(out, "  \"result\": \"PARTIAL\",");
+    let _ = writeln!(out, "  \"received_file\": null,");
+    let _ = writeln!(
+        out,
+        "  \"resume_code\": {},",
+        quote(&progress.repair_request().encode())
+    );
     let _ = writeln!(
         out,
         "  \"input\": {},",
         quote(&partial.video.to_string_lossy())
     );
-    let _ = writeln!(out, "  \"result\": \"PARTIAL\",");
     let _ = writeln!(out, "  \"progress\": {{");
     let _ = writeln!(out, "    \"session\": \"{:08x}\",", progress.session);
     let _ = writeln!(out, "    \"object_len\": {},", progress.object_len);
@@ -934,9 +955,19 @@ fn partial_json(
     let _ = writeln!(out, "    \"needed_estimate\": {},", partial.needed);
     let _ = writeln!(
         out,
-        "    \"manifest\": {}",
+        "    \"manifest\": {},",
         quote(&manifest.to_string_lossy())
     );
+    let _ = writeln!(out, "    \"eta_seconds\": {{");
+    let eta_turbo60 = (partial.needed as f64 / 60.0).ceil() as u64;
+    let eta_turbo30 = (partial.needed as f64 / 30.0).ceil() as u64;
+    let eta_turbo15 = (partial.needed as f64 / 15.0).ceil() as u64;
+    let eta_megabit = (partial.needed as f64 / 60.0).ceil() as u64;
+    let _ = writeln!(out, "      \"turbo60\": {},", eta_turbo60);
+    let _ = writeln!(out, "      \"turbo30\": {},", eta_turbo30);
+    let _ = writeln!(out, "      \"turbo15\": {},", eta_turbo15);
+    let _ = writeln!(out, "      \"megabit\": {}", eta_megabit);
+    let _ = writeln!(out, "    }}");
     let _ = writeln!(out, "  }},");
     let _ = writeln!(out, "  \"frames_decoded\": {},", outcome.counters.pictures());
     let _ = writeln!(out, "  \"codes_found\": {},", outcome.counters.codes());
@@ -1352,5 +1383,70 @@ mod tests {
     fn a_quiet_run_is_scripted_not_interactive() {
         // `-q` is only ever passed by something that wants text.
         assert!(!wants_gui_with(&args(&["-q"]), false, true, false));
+    }
+
+    #[test]
+    fn complete_json_satisfies_agent_contract() {
+        let report = sample_report(Some(Comparison::Identical {
+            original: PathBuf::from("/tmp/original.bin"),
+        }));
+        let received = sendmecongo_core::Received {
+            name: "test.bin".into(),
+            data: vec![0u8; 100],
+            frames_used: 10,
+            duplicates: 2,
+        };
+        let outcome = crate::pipeline::Outcome {
+            counters: std::sync::Arc::new(crate::pipeline::Counters::default()),
+            symbols: Vec::new(),
+            first_header: None,
+            received: None,
+            progress: None,
+            elapsed: std::time::Duration::from_secs(1),
+        };
+        let out = super::json(&report, &received, &outcome);
+        assert!(out.contains("\"status\": \"done\""));
+        assert!(out.contains("\"result\": \"COMPLETE\""));
+        assert!(out.contains("\"received_file\":"));
+    }
+
+    #[test]
+    fn partial_json_satisfies_agent_contract() {
+        use sendmecongo_core::Sender;
+        use std::path::Path;
+        let sender = Sender::new("x.bin", &vec![5u8; 10_000], 1000, 20).unwrap();
+        let mut receiver = sendmecongo_core::Receiver::new();
+        for frame in sender.frames().iter().take(5) {
+            receiver.push(frame).unwrap();
+        }
+        let progress = receiver.export_progress().unwrap();
+        let partial = super::PartialReport {
+            video: PathBuf::from("/tmp/partial.mov"),
+            manifest_path: Some(PathBuf::from("/tmp/partial.smr.json")),
+            received: 5,
+            needed: 7,
+            source: 10,
+            resumed: None,
+            progress: Some(progress.clone()),
+            pictures: 10,
+            codes: 10,
+            rejected: 0,
+            decode_errors: 0,
+        };
+        let outcome = crate::pipeline::Outcome {
+            counters: std::sync::Arc::new(crate::pipeline::Counters::default()),
+            symbols: Vec::new(),
+            first_header: None,
+            received: None,
+            progress: Some(progress.clone()),
+            elapsed: std::time::Duration::from_secs(1),
+        };
+        let out = super::partial_json(&partial, &progress, Path::new("/tmp/partial.smr.json"), &outcome);
+        assert!(out.contains("\"status\": \"partial\""));
+        assert!(out.contains("\"result\": \"PARTIAL\""));
+        assert!(out.contains("\"received_file\": null"));
+        assert!(out.contains("\"resume_code\": \"SMR1-"));
+        assert!(out.contains("\"eta_seconds\":"));
+        assert!(out.contains("\"turbo60\":"));
     }
 }

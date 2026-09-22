@@ -235,6 +235,13 @@ pub fn check_size(name: &str, bytes: u64) -> std::result::Result<(), String> {
     Err(fill(t().prep_too_large, &[&name, &human(bytes as usize)]))
 }
 
+/// Synchronously prepare a file on the current thread without an asynchronous worker.
+pub fn prepare_sync(path: &Path) -> std::result::Result<Prepared, String> {
+    let progress = Progress::new();
+    let cancel = AtomicBool::new(false);
+    prepare(path, &progress, &cancel)
+}
+
 fn prepare(
     path: &Path,
     progress: &Progress,

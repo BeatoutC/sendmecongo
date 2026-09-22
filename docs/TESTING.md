@@ -148,6 +148,7 @@ hdiutil detach "/Volumes/SendMeCongo 接收"
 | **L2** 动态基线 | 理想条件下的真实吞吐 | 手机**录像** 5~10s | 见下 |
 | **L3** 档位扫描 | 各档位在你的设备上能用吗 | 每档各录一段 | 见下 |
 | **L4** 场景矩阵 | 最差情况 | 距离/角度/亮度组合 | 见下 |
+| **L5** 续传与补播 | 跨拍摄合并与差额补播 | 欠收录像 + 补拍录像 | 见下 |
 
 ### L1 · 静态光学（先做这个，30 秒出结果）
 
@@ -189,6 +190,34 @@ done
 | 手持 vs 固定 | 固定 / 手持 |
 
 每组录 10 秒。这张表就是后面写进验收报告的原始素材。
+
+### L5 · 续传与补播模式（M2 核心验收）
+
+验证喷泉码下的断点续传（跨场次累积符号 + 差额补足）与补播码链路。
+
+#### L5a · 跨拍摄合并断点续传（CLI 主路径）
+使用录制时长不足的录像（如 `recordings/06.MOV` 仅捕获 1229 个唯一符号，欠缺 2 个），执行接收：
+
+```bash
+./target/release/sendmecongo-recv recordings/06.MOV --out out/l5 --compare testdata/random2m.bin --json out/06_partial.json
+```
+- **判据**：进程返回退出码 `2`（Partial），在录像旁落盘 `recordings/06.smr.json` 与 `recordings/06.smr.bin`。
+- `out/06_partial.json` 中包含 `"status": "partial"`, `"needed_estimate": 8`, 以及生成的 `"resume_code": "SMR1-..."`。
+
+使用第二段补拍录像（如 `recordings/07.MOV`）带上先前的清单执行合并恢复：
+```bash
+./target/release/sendmecongo-recv recordings/07.MOV --resume recordings/06.smr.json --out out/l5 --compare testdata/random2m.bin --json out/07_merged.json
+```
+- **判据**：进程载入上一段的累积符号，迅速收满，返回退出码 `0`，比对结果为 `IDENTICAL ✓`。
+
+#### L5b · 补播码模式端到端验证
+1. 接收端未收满时生成的 `resume_code`（如 `SMR1-...`）携带了会话三元组 `(session, object_len, symbol_size)` 及差额符号数。
+2. 将该码带回隔离机发送端，使用 `--resume-code` 启动播放：
+```bash
+./target/release/sendmecongo-send --file testdata/random2m.bin --preset turbo60 --resume-code "<SMR1-...>" --play
+```
+- 发送端自动校验原文件与补播码匹配，计算缺额，只发射后续的全新修复符号（循环时长通常仅需数秒）。
+3. 补拍这段短视频后，接收端通过 `--resume` 合并，即刻收满。
 
 ---
 
