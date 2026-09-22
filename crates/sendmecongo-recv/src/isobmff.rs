@@ -127,11 +127,26 @@ fn read_header(f: &mut File, pos: u64, limit: u64) -> Result<BoxHeader> {
 }
 
 /// Direct children of the box whose payload spans `[start, end)`.
-fn children(f: &mut File, start: u64, end: u64) -> Result<Vec<BoxHeader>> {
+///
+/// `tolerant` decides what an unparseable header means. Inside a container the
+/// box tree is ours to trust, so a bad size is real damage and belongs on
+/// screen. At the top level it is not: phone vendors append private blobs after
+/// `moov` — Huawei writes a `model…buildVersion…debugVideoInfo(CHNC00E175R5P1)`
+/// run — and the eight bytes that follow a perfectly good movie parse as a wild
+/// box size. Failing the file over that would mean refusing the very recordings
+/// this tool exists to read, so a tolerant walk stops at the first header it
+/// cannot trust and keeps everything it already found.
+fn children(f: &mut File, start: u64, end: u64, tolerant: bool) -> Result<Vec<BoxHeader>> {
     let mut out = Vec::new();
     let mut pos = start;
     while pos + 8 <= end {
-        let h = read_header(f, pos, end)?;
+        let h = match read_header(f, pos, end) {
+            Ok(h) => h,
+            // Only a bad *size* is survivable. An I/O error is not a shape
+            // problem and must not be papered over.
+            Err(Error::BadStructure(_)) if tolerant => break,
+            Err(other) => return Err(other),
+        };
         if h.end <= pos {
             break;
         }
@@ -146,7 +161,7 @@ fn find_path(f: &mut File, start: u64, end: u64, path: &[&[u8; 4]]) -> Result<Op
     let mut range = (start, end);
     let mut found = None;
     for want in path {
-        match children(f, range.0, range.1)?
+        match children(f, range.0, range.1, false)?
             .into_iter()
             .find(|k| k.is(want))
         {
@@ -214,30 +229,120 @@ impl VideoTrack {
 pub fn open(path: &Path) -> Result<VideoTrack> {
     let mut f = File::open(path)?;
     let file_len = f.metadata()?.len();
-    let top = children(&mut f, 0, file_len)?;
+    // Tolerant: a vendor blob after `moov` must not cost us the `moov`.
+    let top = children(&mut f, 0, file_len, true)?;
+    let has_moof = top.iter().any(|b| b.is(b"moof"));
 
-    if top.iter().any(|b| b.is(b"moof")) {
-        return Err(Error::Fragmented);
+    let moov = match top.iter().find(|b| b.is(b"moov")) {
+        Some(moov) => *moov,
+        // The walk above stopped early. A vendor blob can sit in *front* of the
+        // movie too, and the box we need is still somewhere in the file.
+        None => hunt_for_moov(&mut f, file_len)?.ok_or(Error::NotIsobmff)?,
+    };
+
+    settle(has_moof, video_track_in(&mut f, moov.body, moov.end))
+}
+
+/// What the file is, given what the top-level scan saw and what the `moov` gave.
+///
+/// The order is the whole point: a `moov` holding samples settles the question
+/// on its own, and only a `moov` with nothing to read means the samples must
+/// live in fragments. Asking about `moof` first is what got an ordinary
+/// recording whose tail happened to parse as `moof` reported as an unsupported
+/// fragmented movie — a wrong answer that sends the reader off to fix the wrong
+/// thing. Kept separate from `open` so the precedence is testable on its own.
+fn settle(has_moof: bool, found: Result<VideoTrack>) -> Result<VideoTrack> {
+    match found {
+        Ok(track) if !track.samples.is_empty() => Ok(track),
+        _ if has_moof => Err(Error::Fragmented),
+        other => other,
     }
-    let moov = top
-        .iter()
-        .find(|b| b.is(b"moov"))
-        .ok_or(Error::NotIsobmff)?;
-    let (moov_body, moov_end) = (moov.body, moov.end);
+}
 
-    for trak in children(&mut f, moov_body, moov_end)?
+/// The video track inside a `moov`, or the reason there isn't one.
+fn video_track_in(f: &mut File, moov_body: u64, moov_end: u64) -> Result<VideoTrack> {
+    for trak in children(f, moov_body, moov_end, false)?
         .into_iter()
         .filter(|b| b.is(b"trak"))
     {
         // hdlr payload: version+flags(4) pre_defined(4) handler_type(4)
-        let Some(hdlr) = find_path(&mut f, trak.body, trak.end, &[b"mdia", b"hdlr"])? else {
+        let Some(hdlr) = find_path(f, trak.body, trak.end, &[b"mdia", b"hdlr"])? else {
             continue;
         };
-        if read_u32(&mut f, hdlr.body + 8)? == u32::from_be_bytes(*b"vide") {
-            return read_track(&mut f, trak.body, trak.end);
+        if read_u32(f, hdlr.body + 8)? == u32::from_be_bytes(*b"vide") {
+            return read_track(f, trak.body, trak.end);
         }
     }
     Err(Error::NoVideoTrack)
+}
+
+/// Last resort for a file whose top-level walk broke before it reached `moov`.
+///
+/// The tolerant walk stops at the first header it cannot trust, which is right
+/// when the junk is *behind* the movie — but it also means a blob parked in
+/// front of `moov` hides the whole file, and the receiver reports "not an
+/// MP4/MOV file" for a recording that is perfectly fine. So scan for the four
+/// bytes and accept the first hit that is preceded by a size which makes sense
+/// as a box.
+///
+/// This runs only after the normal walk came up empty-handed, so it can never
+/// turn a file that used to open into one that does not.
+fn hunt_for_moov(f: &mut File, file_len: u64) -> Result<Option<BoxHeader>> {
+    const CHUNK: usize = 1 << 20;
+    // Three bytes of overlap, so a signature straddling a chunk boundary is
+    // still seen whole instead of being missed by both chunks.
+    let mut buf = vec![0u8; CHUNK + 3];
+    let mut base = 0u64;
+    while base < file_len {
+        let want = ((file_len - base) as usize).min(CHUNK + 3);
+        f.seek(SeekFrom::Start(base))?;
+        let got = read_up_to(f, &mut buf[..want])?;
+        for at in 4..got.saturating_sub(3) {
+            if &buf[at..at + 4] != b"moov" {
+                continue;
+            }
+            if let Some(header) = moov_if_sized_plausibly(f, base + at as u64 - 4, file_len)? {
+                return Ok(Some(header));
+            }
+        }
+        if got < CHUNK {
+            break;
+        }
+        base += CHUNK as u64;
+    }
+    Ok(None)
+}
+
+/// Does a `moov` box really begin at `box_start`? Only the 32-bit size form is
+/// entertained: a real `moov` is kilobytes, never the 4 GB it would take to
+/// need the extended field, so a `1` read here means the hit was coincidence.
+fn moov_if_sized_plausibly(
+    f: &mut File,
+    box_start: u64,
+    file_len: u64,
+) -> Result<Option<BoxHeader>> {
+    let size = read_u32(f, box_start)? as u64;
+    if size < 8 || box_start + size > file_len {
+        return Ok(None);
+    }
+    Ok(Some(BoxHeader {
+        kind: *b"moov",
+        body: box_start + 8,
+        end: box_start + size,
+    }))
+}
+
+/// `read_exact`, except a short file is data rather than an error.
+fn read_up_to(f: &mut File, buf: &mut [u8]) -> Result<usize> {
+    let mut filled = 0usize;
+    while filled < buf.len() {
+        let n = f.read(&mut buf[filled..])?;
+        if n == 0 {
+            break;
+        }
+        filled += n;
+    }
+    Ok(filled)
 }
 
 fn read_track(f: &mut File, trak_body: u64, trak_end: u64) -> Result<VideoTrack> {
@@ -264,12 +369,12 @@ fn read_track(f: &mut File, trak_body: u64, trak_end: u64) -> Result<VideoTrack>
     };
 
     // --- codec + configuration -------------------------------------------
-    let stsd = children(f, stbl_body, stbl_end)?
+    let stsd = children(f, stbl_body, stbl_end, false)?
         .into_iter()
         .find(|b| b.is(b"stsd"))
         .ok_or(Error::MissingTable("stsd"))?;
     // stsd payload: version+flags(4) entry_count(4) then sample entries
-    let entry = children(f, stsd.body + 8, stsd.end)?
+    let entry = children(f, stsd.body + 8, stsd.end, false)?
         .into_iter()
         .find(|b| b.is(b"hvc1") || b.is(b"hev1") || b.is(b"avc1") || b.is(b"avc3"))
         .ok_or_else(|| Error::UnsupportedCodec(describe_entries(f, stsd.body + 8, stsd.end)))?;
@@ -284,7 +389,7 @@ fn read_track(f: &mut File, trak_body: u64, trak_end: u64) -> Result<VideoTrack>
         .unwrap_or(0);
 
     let config_kind: &[u8; 4] = if is_hevc { b"hvcC" } else { b"avcC" };
-    let cfg = children(f, entry.body + VISUAL_SAMPLE_ENTRY_PREFIX, entry.end)?
+    let cfg = children(f, entry.body + VISUAL_SAMPLE_ENTRY_PREFIX, entry.end, false)?
         .into_iter()
         .find(|b| b.is(config_kind))
         .ok_or(Error::BadStructure(
@@ -298,7 +403,7 @@ fn read_track(f: &mut File, trak_body: u64, trak_end: u64) -> Result<VideoTrack>
     };
 
     // --- sample tables ----------------------------------------------------
-    let stsz = children(f, stbl_body, stbl_end)?
+    let stsz = children(f, stbl_body, stbl_end, false)?
         .into_iter()
         .find(|b| b.is(b"stsz"))
         .ok_or(Error::MissingTable("stsz"))?;
@@ -317,7 +422,7 @@ fn read_track(f: &mut File, trak_body: u64, trak_end: u64) -> Result<VideoTrack>
             .collect()
     };
 
-    let stsc = children(f, stbl_body, stbl_end)?
+    let stsc = children(f, stbl_body, stbl_end, false)?
         .into_iter()
         .find(|b| b.is(b"stsc"))
         .ok_or(Error::MissingTable("stsc"))?;
@@ -341,7 +446,7 @@ fn read_track(f: &mut File, trak_body: u64, trak_end: u64) -> Result<VideoTrack>
         return Err(Error::BadStructure("stsc is empty"));
     }
 
-    let stco = children(f, stbl_body, stbl_end)?
+    let stco = children(f, stbl_body, stbl_end, false)?
         .into_iter()
         .find(|b| b.is(b"stco") || b.is(b"co64"))
         .ok_or(Error::MissingTable("stco"))?;
@@ -405,7 +510,7 @@ fn read_track(f: &mut File, trak_body: u64, trak_end: u64) -> Result<VideoTrack>
 
 /// Best-effort label for the "unsupported codec" message.
 fn describe_entries(f: &mut File, start: u64, end: u64) -> String {
-    children(f, start, end)
+    children(f, start, end, false)
         .map(|kids| {
             kids.iter()
                 .map(|k| String::from_utf8_lossy(&k.kind).trim().to_string())
@@ -536,5 +641,162 @@ pub fn is_random_access(codec: Codec, nal_type: u8) -> bool {
         // IDR only. SPS/PPS travel in-band in `avc3` streams and would otherwise
         // look like a keyframe every time they are repeated.
         Codec::Avc => nal_type == 5,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn boxed(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(8 + body.len());
+        out.extend_from_slice(&((8 + body.len()) as u32).to_be_bytes());
+        out.extend_from_slice(kind);
+        out.extend_from_slice(body);
+        out
+    }
+
+    /// Exactly what a Huawei phone hands over: a movie, and then a private run
+    /// of text whose first eight bytes read as a 1.8 GB box.
+    fn movie_with_a_vendor_tail() -> Vec<u8> {
+        let mut out = boxed(b"ftyp", b"mp42\0\0\0\0isommp42");
+        out.extend_from_slice(&boxed(b"moov", b""));
+        out.extend_from_slice(b"modelVERAN10buildVersion10.0.0.175(CHNC00E175R5P1)");
+        out
+    }
+
+    fn written(name: &str, bytes: &[u8]) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("smc-iso-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(name);
+        std::fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    /// The wild size at the tail must not cost the caller the `moov` that sits
+    /// in front of it. Before this was tolerant, every phone recording that
+    /// carried a vendor blob failed to open at all.
+    #[test]
+    fn a_vendor_blob_after_the_movie_is_not_a_damaged_file() {
+        let path = written("厂商尾巴.mp4", &movie_with_a_vendor_tail());
+        let mut f = File::open(&path).unwrap();
+        let len = f.metadata().unwrap().len();
+
+        let top = children(&mut f, 0, len, true).unwrap();
+        let kinds: Vec<String> = top
+            .iter()
+            .map(|b| String::from_utf8_lossy(&b.kind).to_string())
+            .collect();
+        assert_eq!(kinds, vec!["ftyp", "moov"]);
+    }
+
+    /// Tolerance is a top-level concession, not a global mood: a box tree we
+    /// are already inside still has to be sane.
+    #[test]
+    fn a_wild_size_inside_a_container_is_still_refused() {
+        let bytes = movie_with_a_vendor_tail();
+        let path = written("容器内越界.mp4", &bytes);
+        let mut f = File::open(&path).unwrap();
+        let len = f.metadata().unwrap().len();
+
+        assert!(matches!(
+            children(&mut f, 0, len, false),
+            Err(Error::BadStructure(_))
+        ));
+    }
+
+    /// The failure a person actually saw was "file structure is damaged" for a
+    /// recording that was fine. A tail with no video track must now report the
+    /// missing track instead.
+    #[test]
+    fn a_trailing_blob_no_longer_masks_the_real_problem() {
+        let path = written("无视频轨.mp4", &movie_with_a_vendor_tail());
+        assert!(matches!(open(&path), Err(Error::NoVideoTrack)));
+    }
+
+    fn bare_track(samples: Vec<Sample>) -> VideoTrack {
+        VideoTrack {
+            codec: Codec::Avc,
+            parameter_sets: Vec::new(),
+            nal_length_size: 4,
+            width: 3840,
+            height: 2160,
+            timescale: 90_000,
+            duration: 90_000,
+            samples,
+        }
+    }
+
+    /// A `moov` holding samples is the file's own answer, and it outranks
+    /// anything the tail tries to say. Deciding on `moof` first is how an
+    /// ordinary recording whose tail happened to line up as a `moof` box got
+    /// reported as an unsupported fragmented movie.
+    #[test]
+    fn samples_in_the_moov_outrank_a_stray_moof() {
+        let track = bare_track(vec![Sample { offset: 0, size: 4 }]);
+        let settled = settle(true, Ok(track))
+            .expect("a moov holding samples must win over a stray moof");
+        assert_eq!(settled.samples.len(), 1);
+    }
+
+    /// The genuine fragmented shape: a `moov` with nothing to read, and
+    /// fragments holding the samples instead.
+    #[test]
+    fn a_moov_with_nothing_to_read_is_a_fragmented_movie() {
+        assert!(matches!(
+            settle(true, Ok(bare_track(Vec::new()))),
+            Err(Error::Fragmented)
+        ));
+        assert!(matches!(
+            settle(true, Err(Error::NoVideoTrack)),
+            Err(Error::Fragmented)
+        ));
+    }
+
+    /// With no fragments anywhere, the `moov`'s own complaint is the useful
+    /// answer — not a guess about fragmentation.
+    #[test]
+    fn without_fragments_the_moov_speaks_for_itself() {
+        assert!(matches!(
+            settle(false, Err(Error::NoVideoTrack)),
+            Err(Error::NoVideoTrack)
+        ));
+    }
+
+    /// A blob parked *in front of* the movie stops the tolerant walk before it
+    /// ever reaches `moov`, so the signature hunt is all that stands between a
+    /// readable recording and a flat "not an MP4/MOV file".
+    #[test]
+    fn a_movie_hiding_behind_a_vendor_blob_is_still_found() {
+        let mut bytes = boxed(b"ftyp", b"mp42\0\0\0\0isommp42");
+        bytes.extend_from_slice(b"modelVERAN10buildVersion10.0.0.175(CHNC00E175R5P1)");
+        let moov_at = bytes.len();
+        bytes.extend_from_slice(&boxed(b"moov", b""));
+
+        let path = written("blob在前.mp4", &bytes);
+        let mut f = File::open(&path).unwrap();
+        let len = bytes.len() as u64;
+
+        // The walk gives up on the blob...
+        let top = children(&mut f, 0, len, true).unwrap();
+        assert!(!top.iter().any(|b| b.is(b"moov")));
+
+        // ...and the hunt finds the movie sitting behind it.
+        let found = hunt_for_moov(&mut f, len).unwrap().unwrap();
+        assert_eq!(found.body, moov_at as u64 + 8);
+        assert_eq!(found.end, len);
+    }
+
+    /// Four bytes spelling `moov` do not make a `moov` box. Without the size
+    /// check the hunt would hand back whatever happened to precede them.
+    #[test]
+    fn a_coincidental_moov_signature_is_not_trusted() {
+        let mut bytes = boxed(b"ftyp", b"mp42\0\0\0\0isommp42");
+        // Prose, not a box: the four bytes in front are nowhere near a size.
+        bytes.extend_from_slice(b"xxxxmoov-not-a-real-box-at-all");
+
+        let path = written("假签名.mp4", &bytes);
+        let mut f = File::open(&path).unwrap();
+        assert!(hunt_for_moov(&mut f, bytes.len() as u64).unwrap().is_none());
     }
 }
