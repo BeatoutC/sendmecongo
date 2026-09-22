@@ -11,13 +11,17 @@ single zero-dependency executable rebuilds the file — byte-for-byte identical.
 
 No network. No USB. No Bluetooth. Nothing leaves the room except light.
 
-```
-file → compression (gzip/brotli, whichever is smaller) → SMC1 container
-     → RaptorQ fountain coding (RFC 6330) → self-describing SMQ frames
-     → QR codes, full-screen or dual-lane
-                    ↓  one-way, lossy optical channel, no ACK
-phone camera → recording → sendmecongo-recv → RaptorQ recovery
-     → four layers of CRC → file on disk, verified identical
+```mermaid
+flowchart TB
+    subgraph TX["Sender · the air-gapped machine"]
+        direction LR
+        A["file<br/>compress<br/>gzip / brotli"] --> B["SMC1<br/>container"] --> C["RaptorQ coding<br/>RFC 6330"] --> D["SMQ frames<br/>self-describing"] --> E["QR codes<br/>full-screen<br/>or dual-lane"]
+    end
+    E ==>|one-way, lossy, no ACK| F
+    subgraph RX["Receiver"]
+        direction LR
+        F["phone camera<br/>recording"] --> G["sendmecongo-recv"] --> H["RaptorQ<br/>recovery"] --> I["four layers<br/>of CRC"] --> J["file on disk<br/>verified identical"]
+    end
 ```
 
 Built for getting documents, keys, configuration, logs, and small evidence

@@ -10,13 +10,17 @@
 
 零网络、零 USB、零蓝牙。离开这个房间的只有光。
 
-```
-文件 → 压缩(gzip/brotli 择优) → SMC1 容器
-     → RaptorQ 喷泉编码(RFC 6330) → 自描述 SMQ 帧
-     → 二维码，全屏 / 双通道
-                ↓  单向、有损光学信道，无 ACK
-手机摄像头 → 录像 → sendmecongo-recv → RaptorQ 还原
-     → 四层 CRC 校验 → 落盘文件，验证一致
+```mermaid
+flowchart TB
+    subgraph TX["发送端 · 物理隔离机"]
+        direction LR
+        A["文件<br/>压缩择优<br/>gzip / brotli"] --> B["SMC1 容器"] --> C["RaptorQ 编码<br/>RFC 6330"] --> D["SMQ 帧<br/>自描述"] --> E["二维码<br/>全屏<br/>或双通道"]
+    end
+    E ==>|单向、有损、无 ACK| F
+    subgraph RX["接收端"]
+        direction LR
+        F["手机摄像头<br/>录像"] --> G["sendmecongo-recv"] --> H["RaptorQ 还原"] --> I["四层<br/>CRC 校验"] --> J["落盘文件<br/>逐字节一致"]
+    end
 ```
 
 用途：把文档、密钥、配置、日志、小体积证据包**从物理隔离环境里拿出来**——
