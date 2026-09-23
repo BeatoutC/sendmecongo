@@ -141,6 +141,8 @@ cargo build --release            # 全部
   cmake；NASM 失败是软失败——没 SIMD 也能用）。没有 C++ 编译器的机器可以
   `--no-default-features` 只留 HEVC——手机实际录的就是 HEVC。
 - Windows 构建产出静态 CRT 单文件 exe（见 `.cargo/config.toml`）。
+  Windows 的构建步骤、两条独立的图标通路、以及发出前该验什么，
+  见 [docs/BUILD-WINDOWS.md](docs/BUILD-WINDOWS.md)。
 
 打包（macOS）：`./tools/build-macos.sh` 产出 `.app` 与 DMG。DMG 里附了
 首次打开说明和一键 `清除下载隔离标记.command`——app 是 ad-hoc 签名，下载后
@@ -152,6 +154,10 @@ cargo build --release            # 全部
 - [docs/PROTOCOL.md](docs/PROTOCOL.md) —— SMC1 容器与 SMQ 帧格式
 - [docs/TESTING.md](docs/TESTING.md) —— 在你自己的屏幕 + 手机上测光学链路，
   以及指标怎么读
+- [docs/BUILD-WINDOWS.md](docs/BUILD-WINDOWS.md) —— Windows 构建指南：
+  工具链、两条独立的图标通路、验收清单
+- [docs/AGENT.md](docs/AGENT.md) —— 机器契约（命令行参数、退出码、JSON Schema），
+  给 agent 驱动二进制用
 
 ## 已知限制
 

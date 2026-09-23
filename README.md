@@ -157,6 +157,8 @@ cargo build --release            # everything
   without a C++ compiler can build `--no-default-features` for HEVC-only,
   which is what phones actually record.
 - Windows builds produce static-CRT single-file exes (see `.cargo/config.toml`).
+  For the Windows steps, the two icon paths and what to check before shipping,
+  see [docs/BUILD-WINDOWS.md](docs/BUILD-WINDOWS.md).
 
 Packaging (macOS): `./tools/build-macos.sh` builds the `.app`s and DMGs.
 The DMG includes a first-open note and a one-liner quarantine-clearing
@@ -169,6 +171,10 @@ Security → Open Anyway on 15+; no challenge when copied from USB).
 - [docs/PROTOCOL.md](docs/PROTOCOL.md) — SMC1 container and SMQ frame formats
 - [docs/TESTING.md](docs/TESTING.md) — how to test the optical link on your
   own screen + phone, and how to read the metrics
+- [docs/BUILD-WINDOWS.md](docs/BUILD-WINDOWS.md) — Windows build guide:
+  toolchains, the two independent icon paths, acceptance checklist
+- [docs/AGENT.md](docs/AGENT.md) — the machine contract (CLI flags, exit
+  codes, JSON schema) for driving the binaries from an agent
 
 ## Known limitations
 
