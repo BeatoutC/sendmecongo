@@ -24,9 +24,15 @@ pub struct GrayFrame {
 /// keyframes means each worker starts mid-stream, where the first one or two
 /// leading pictures are expected to fail — and those frames are exactly the
 /// ones the fountain code has repair symbols for.
+///
+/// The count is read through [`VideoDecoder::take_errors`] and never as a
+/// field: one decoder outlives the groups of pictures it is fed, so a caller
+/// that reports the *running total* each time a group ends bills every early
+/// failure once per group. That is a reported number, not a decoding one — the
+/// bytes recovered were always right.
 pub struct VideoDecoder {
     inner: Inner,
-    pub errors: usize,
+    errors: usize,
 }
 
 enum Inner {
@@ -68,6 +74,14 @@ impl VideoDecoder {
             },
         }
         out.len() - before
+    }
+
+    /// Failures since the previous call, leaving the counter at zero.
+    ///
+    /// A delta, not a total — see the type-level note. Each worker reports once
+    /// per group of pictures, and those reports are summed by the caller.
+    pub fn take_errors(&mut self) -> usize {
+        std::mem::take(&mut self.errors)
     }
 
     /// End of stream: release pictures still held for reordering.
@@ -155,4 +169,111 @@ fn push_yuv(frame: &openh264::decoder::DecodedYUV<'_>, out: &mut Vec<GrayFrame>)
         height: h,
         luma,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 回归用的小码流：8 帧灰度阶梯、320×240、avc1。由
+    /// `tools/make-h264-sample.swift` 生成，随仓库跟踪。
+    ///
+    /// 为什么要有这么一段：`recordings/` 里的相机素材全是 iPhone 的 HEVC
+    /// （`hvc1`），所以 H.264 那一半长期只有「编译过」这一个保障 —— 真跑一段
+    /// 安卓录像是人工验收，挡不住以后改坏。相机素材单条 56~312 MB 进不了 git，
+    /// 这段 1.5 KB 的合成码流把同一条链路钉在 `cargo test` 里。
+    fn sample_path() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/h264-sample.mp4")
+    }
+
+    /// 一帧的平均亮度。灰度阶梯相邻帧差 1/7 个满量程，足够区分。
+    fn mean_luma(frame: &GrayFrame) -> u32 {
+        let sum: u64 = frame.luma.iter().map(|&s| s as u64).sum();
+        (sum / frame.luma.len() as u64) as u32
+    }
+
+    #[test]
+    fn both_codec_paths_construct() {
+        assert!(
+            VideoDecoder::new(Codec::Hevc).is_ok(),
+            "HEVC 解码器必须一直可构造"
+        );
+        #[cfg(feature = "h264")]
+        assert!(
+            VideoDecoder::new(Codec::Avc).is_ok(),
+            "openh264 必须能初始化"
+        );
+    }
+
+    /// 关掉 `h264` feature 时，一段 avc1 录像必须得到一句明确的话，而不是被
+    /// 静默拆给 HEVC 解码器去啃 —— 那样对外表现为「一个码也读不出来」，看起来
+    /// 像相机的问题。
+    #[cfg(not(feature = "h264"))]
+    #[test]
+    fn avc_without_the_h264_feature_is_refused_out_loud() {
+        assert!(VideoDecoder::new(Codec::Avc).is_err());
+    }
+
+    /// 最小闭环：容器解析 → openh264 解码 → luma 抽取。
+    #[cfg(feature = "h264")]
+    #[test]
+    fn a_real_h264_recording_decodes_into_its_pictures() {
+        let path = sample_path();
+        let track = crate::isobmff::open(&path).expect("打开合成样本");
+        assert_eq!(
+            track.codec,
+            Codec::Avc,
+            "样本必须是 avc1，否则测的不是 H.264 那一半"
+        );
+        assert_eq!((track.width, track.height), (320, 240));
+        assert_eq!(track.samples.len(), 8, "八个视频样本");
+        assert!(
+            track.parameter_sets.len() >= 2,
+            "avcC 里该有 SPS 和 PPS，参数集走带外"
+        );
+
+        let bytes = std::fs::read(&path).unwrap();
+        let mut decoder = VideoDecoder::new(Codec::Avc).unwrap();
+        let mut frames = Vec::new();
+        for sample in &track.samples {
+            let start = sample.offset as usize;
+            let raw = &bytes[start..start + sample.size as usize];
+            // 每个访问单元都自带参数集：这里只测解码，不复刻 producer 那层
+            // 「参数集只在随机访问点前重发」。
+            let mut access_unit = Vec::new();
+            for set in &track.parameter_sets {
+                access_unit.extend_from_slice(&crate::isobmff::START_CODE);
+                access_unit.extend_from_slice(set);
+            }
+            for nal in crate::isobmff::split_sample(raw, track.nal_length_size) {
+                access_unit.extend_from_slice(&crate::isobmff::START_CODE);
+                access_unit.extend_from_slice(nal);
+            }
+            decoder.push(&access_unit, &mut frames);
+        }
+        decoder.flush(&mut frames);
+        assert_eq!(decoder.take_errors(), 0, "自产的码流不该有解码错误");
+
+        assert_eq!(frames.len(), 8, "八帧要一帧不少地回来");
+        for frame in &frames {
+            assert_eq!((frame.width, frame.height), (320, 240));
+            assert_eq!(
+                frame.luma.len(),
+                320 * 240,
+                "luma 必须是紧密排布的整帧，多一段 stride 或 chroma 都算错"
+            );
+        }
+
+        // 阶梯单调，所以逐帧递增就同时证明了顺序没错、帧没丢也没重复。比断言
+        // 绝对亮度稳：limited-range 转换与有损压缩都会挪动亮度，但不会打乱次序。
+        let brightness: Vec<u32> = frames.iter().map(mean_luma).collect();
+        assert!(
+            brightness.windows(2).all(|w| w[0] < w[1]),
+            "灰度阶梯必须逐帧递增，实测 {brightness:?}"
+        );
+        assert!(
+            brightness[7] - brightness[0] > 150,
+            "首尾要拉开一个满量程，实测 {brightness:?}"
+        );
+    }
 }

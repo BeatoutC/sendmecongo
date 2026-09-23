@@ -353,9 +353,11 @@ fn spawn_worker(
                     return;
                 }
             }
-            counters
-                .decode_errors
-                .fetch_add(decoder.errors, Ordering::Relaxed);
+            // Per-group delta, not the decoder's running total: this worker
+            // keeps its decoder across groups, and every early failure would
+            // otherwise be counted once per group it survives.
+            let failed = decoder.take_errors();
+            counters.decode_errors.fetch_add(failed, Ordering::Relaxed);
         }
     });
 }
