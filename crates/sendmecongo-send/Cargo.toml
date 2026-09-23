@@ -24,5 +24,9 @@ windows-sys = { version = "0.59", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 
-[target.'cfg(target_os = "windows")'.build-dependencies]
+[build-dependencies]
+# 必须是无条件依赖，不能写成 [target.'cfg(target_os = "windows")'.build-dependencies]：
+# build.rs 是按 CARGO_CFG_TARGET_OS（目标平台）在运行时判断的，代码里对 winres 的引用
+# 在宿主不是 Windows 时也得能编译过——挂在那条 cfg 下，macOS 自己的构建就会编译失败。
+# 代价只是非 Windows 平台上多编译一个小 crate，功能上不会被调用（build.rs 直接返回）。
 winres = "0.1"
