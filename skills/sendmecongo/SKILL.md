@@ -7,7 +7,7 @@ description: "通过屏幕二维码与手机录像，实现物理隔离机（Air
 
 当用户需要从物理隔离环境跨网闸提取文件、或者提供了 SendMeCongo 仓库并期望传输文件时，使用本技能。
 
-本技能引用 [docs/AGENT.md](file:///Users/wuzhongkang/Desktop/sendmecongo/docs/AGENT.md) 中定义的 CLI 与 JSON 契约。
+本技能引用 [docs/AGENT.md](../../docs/AGENT.md) 中定义的 CLI 与 JSON 契约。
 
 ---
 
