@@ -52,9 +52,9 @@ pub fn launch(args: &[String]) -> Result<(), String> {
             .with_inner_size(IDEAL_WINDOW)
             .with_min_inner_size([620.0, 480.0])
             .with_title(i18n::t().rcv_title)
-            // See the sender: without this eframe puts egui's logo in the Dock instead of
-            // the app's own icon.
-            .with_icon(egui::IconData::default()),
+            // See the sender: macOS gets the empty icon so the bundle's AppIcon.icns shows,
+            // Windows gets the app.ico the build script embeds in the .exe.
+            .with_icon(sendmecongo_ui::icon::window_icon(include_bytes!("../app.ico"))),
         ..Default::default()
     };
     eframe::run_native(

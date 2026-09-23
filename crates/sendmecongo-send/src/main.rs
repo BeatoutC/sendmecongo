@@ -129,10 +129,12 @@ fn run_gui(initial: Option<std::path::PathBuf>) -> eframe::Result<()> {
             .with_title(sendmecongo_ui::i18n::t().snd_title)
             // eframe installs egui's own logo as the application icon when the app does not
             // provide one — a black tile with a white "e", which is what the Dock showed
-            // instead of the app's icon. An empty icon means "no icon": leave the bundle's
-            // AppIcon.icns alone. (Windows has no bundle icon to fall back on, so a bare
-            // .exe there gets the generic icon; embedding one would need a resource step.)
-            .with_icon(egui::IconData::default()),
+            // instead of the app's icon. On macOS the empty icon is still the answer: it
+            // leaves the bundle's AppIcon.icns in charge. Windows has no bundle to fall back
+            // on, so there the same app.ico the build script embeds in the .exe is decoded
+            // and handed to the window — without it the title bar and the taskbar showed the
+            // generic application glyph.
+            .with_icon(sendmecongo_ui::icon::window_icon(include_bytes!("../app.ico"))),
         ..Default::default()
     };
     eframe::run_native(

@@ -8,6 +8,11 @@ description = "egui plumbing shared by the sendmecongo sender and receiver GUI"
 [dependencies]
 eframe.workspace = true
 
+# The ICO decoder behind the Windows window icon. Same crate, same version and the same
+# default features that `sendmecongo-core` already pulls in, so naming it here costs no
+# download and no second copy of the build.
+image = "0.25"
+
 # The macOS menu bar. `objc2` is already in the tree — eframe, winit, glutin and rfd all
 # pull it in — so naming these three crates adds nothing to download; the versions have to
 # match the ones they use (0.6 / 0.3) or the ObjC types would not be the same types.
