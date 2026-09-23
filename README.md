@@ -191,8 +191,11 @@ Security → Open Anyway on 15+; no challenge when copied from USB).
 
 ## Roadmap
 
-- [ ] H.264 path end-to-end verification (all test recordings so far are HEVC;
-      the openh264 branch passed compile + logic review only)
+- [x] H.264 path end-to-end verification — `recordings/` already held two real
+      Android `avc1` captures (4K60, both lanes, megabit); both now decode every
+      sample, report zero decode errors, and recover completely. A 1.5 KB
+      synthetic H.264 clip keeps the branch honest in `cargo test`. Re-encoding
+      the HEVC corpus is *not* a substitute — those B frames defeat openh264.
 - [ ] Real-Windows-machine run of the packaged `.exe`
 - [ ] megabit re-measured at `--size 1600` + 4K60 (105.2 KB/s was at 700 px
       per code and 4K30; headroom expected)

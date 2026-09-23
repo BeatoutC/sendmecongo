@@ -171,8 +171,10 @@ cargo build --release            # 全部
 
 ## Roadmap
 
-- [ ] H.264 路径端到端实测（现有测试录像全是 HEVC；openh264 分支只过了
-      编译与逻辑审查）
+- [x] H.264 路径端到端实测 —— `recordings/` 里本来就有两段真实安卓 `avc1` 录像
+      （4K60、双通道、megabit）：逐帧全部解出、零解码错误、完整还原；另有一段
+      1.5 KB 合成 H.264 码流进 `cargo test` 长期盯着这条分支。拿 HEVC 素材转码
+      代替不了它——转出来的 B 帧 openh264 解不动。
 - [ ] 打包后的 `.exe` 在真实 Windows 机器上跑一遍
 - [ ] megabit 用 `--size 1600` + 4K60 重测（105.2 KB/s 是每码 700px + 4K30，
       还有余量）
