@@ -26,8 +26,15 @@ esac
 
 VERSION=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
 
-echo "== 构建两个 app（含图标）"
-./tools/build-macos.sh >/dev/null
+# 刚跑过 tools/build-macos.sh 的时候，dist 里的 .app 就是最新的，再构建一遍
+# 只是把已经建好的 bundle 和图标中间产物删掉重建 —— 慢，而且没必要。
+# SMC_SKIP_BUILD=1 直接用现有产物，只重打 DMG。
+if [ "${SMC_SKIP_BUILD:-0}" = "1" ]; then
+    echo "== 跳过构建（SMC_SKIP_BUILD=1，用 dist 里现有的 app）"
+else
+    echo "== 构建两个 app（含图标）"
+    ./tools/build-macos.sh >/dev/null
+fi
 
 # --- 卷里放什么 ---------------------------------------------------------
 # 说明文件是这里最要紧的东西：app 是 ad-hoc 签名的，被下载过一次之后
@@ -188,12 +195,14 @@ make_dmg() {
     kind=$5
     APP="$ROOT/dist/$app_name.app"
     DMG="$ROOT/dist/${dmg_stem}-${VERSION}.dmg"
-    STAGE="$ROOT/dist/.dmg-$dmg_stem"
+    # 暂存区放系统临时目录，而不是 dist/：dist 只该放要交付的东西，打包中途失败时
+    # 也不会在那里留下半个目录（真发生过——第一次打 send 的 DMG 时中断，dist 里就
+    # 多出一个 .dmg-sendmecongo-send 需要手工清掉）。
+    STAGE="$(mktemp -d "${TMPDIR:-/tmp}/smc-dmg-$dmg_stem.XXXXXX")"
 
     [ -d "$APP" ] || { echo "   找不到 $APP"; return 1; }
 
-    rm -rf "$STAGE" "$DMG"
-    mkdir -p "$STAGE"
+    # $STAGE 由上面的 mktemp 建好了；同名的旧 $DMG 交给 hdiutil 的 -ov 覆盖。
     cp -R "$APP" "$STAGE/"
     # 惯例：一个指向 /Applications 的链接，中文系统里会自动显示成「应用程序」
     ln -s /Applications "$STAGE/Applications"
