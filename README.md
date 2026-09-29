@@ -57,6 +57,25 @@ Both GUIs and the CLI speak **Simplified Chinese (default), Traditional
 Chinese, and English** — switchable live from the menu bar (macOS) or in-window
 menu (Windows/Linux), or with `--lang` / `SENDMECONGO_LANG`.
 
+## System requirements
+
+The two GUIs draw with OpenGL and need **OpenGL 2.0 or newer**. The
+`sendmecongo-recv` CLI mode has no such requirement.
+
+- **Windows**: 10 (1607+) or Server 2016+. On older Windows (7 / 8.1 /
+  Server 2012 R2 and earlier) the exe fails at load time with “The procedure
+  entry point SetProcessDpiAwarenessContext could not be located” — the file
+  is not broken, the OS is simply below the floor; there is no patch for this.
+- **GPU-less remote sessions (RDP, Citrix)**: the session's built-in OpenGL is
+  1.1 (GDI Generic) and the GUIs refuse to start with
+  `egui_glow requires opengl 2.0+`. Copy Mesa's software renderer
+  (`opengl32.dll` + `libgallium_wgl.dll` from
+  [mesa-dist-win](https://github.com/pal1000/mesa-dist-win)) into the exe's
+  folder — no admin rights, nothing system-wide. It works, but CPU rendering
+  is slower; shrink the sender window if the symbol rate drops.
+- **macOS**: 11+ (Apple Silicon only).
+- **Linux**: X11 or Wayland with OpenGL 2.0+.
+
 ## Quick start
 
 **Sender** (the isolated machine):
@@ -197,8 +216,12 @@ Security → Open Anyway on 15+; no challenge when copied from USB).
       synthetic H.264 clip keeps the branch honest in `cargo test`. Re-encoding
       the HEVC corpus is *not* a substitute — those B frames defeat openh264.
 - [ ] Real-Windows-machine run of the packaged `.exe`
-- [ ] megabit re-measured at `--size 1600` + 4K60 (105.2 KB/s was at 700 px
-      per code and 4K30; headroom expected)
+- [ ] megabit re-measured at `--size 1600` + 4K60 — blocked on the renderer, not
+      on the camera. The play loop re-encodes each symbol's QR on every frame,
+      which caps megabit at 38 sym/s at *any* window size, and the 105.2 KB/s on
+      record is already 96% of what that renderer can deliver: faster filming
+      cannot move the number. Measurements and a rejected fix are in
+      [docs/TESTING.md §7.1](docs/TESTING.md).
 - [x] M2 (v0.5.0): resumable transfer — receiver-side progress manifests
       merged across recordings, per-block symbol grid, and a type-in resume
       code so the sender replays only the deficit — plus an agent skill

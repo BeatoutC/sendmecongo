@@ -52,6 +52,24 @@ macOS 构建是 2.6 MB 单架构（arm64）的 `.app`，运行时只依赖系统
 macOS 从系统菜单栏切换（即时生效），Windows / Linux 用窗口内菜单，
 命令行用 `--lang` / `SENDMECONGO_LANG`。
 
+## 系统要求
+
+两个 GUI 用 OpenGL 绘制，需要 **OpenGL 2.0 或更新**；`sendmecongo-recv`
+的命令行模式没有这个要求。
+
+- **Windows**：10（1607+）或 Server 2016+。更老的系统（Win 7 / 8.1 /
+  Server 2012 R2 及更早）exe 在加载阶段就报「无法定位程序输入点
+  SetProcessDpiAwarenessContext」——文件没有坏，是系统低于下限，
+  没有补丁可打。
+- **无 GPU 的远程会话（RDP / Citrix）**：会话内置的 OpenGL 只有 1.1
+  （GDI Generic），GUI 启动报 `egui_glow requires opengl 2.0+`。把
+  [mesa-dist-win](https://github.com/pal1000/mesa-dist-win) 解压出的
+  `opengl32.dll` + `libgallium_wgl.dll` 复制到 exe 同目录即可
+  （软件渲染、免管理员、不动系统）。能用，但 CPU 渲染慢，
+  播放速率掉就把发送窗口调小。
+- **macOS**：11+（仅 Apple Silicon）。
+- **Linux**：X11 或 Wayland，OpenGL 2.0+。
+
 ## 快速开始
 
 **发送端**（隔离机）：
@@ -176,8 +194,10 @@ cargo build --release            # 全部
       1.5 KB 合成 H.264 码流进 `cargo test` 长期盯着这条分支。拿 HEVC 素材转码
       代替不了它——转出来的 B 帧 openh264 解不动。
 - [ ] 打包后的 `.exe` 在真实 Windows 机器上跑一遍
-- [ ] megabit 用 `--size 1600` + 4K60 重测（105.2 KB/s 是每码 700px + 4K30，
-      还有余量）
+- [ ] megabit 用 `--size 1600` + 4K60 重测 —— 卡在渲染端，不在相机端。播放循环每画
+      一个符号就重编一次 QR，把 megabit 压在 38 sym/s 且**与窗口开多大无关**；
+      105.2 KB/s 已经是那个渲染器能交出的 96%，拍得更快也推不动这个数字。实测数据
+      与一个被否掉的修法见 [docs/TESTING.md §7.1](docs/TESTING.md)。
 - [x] M2（v0.5.0）：断点续传——接收端进度清单跨拍摄合并、逐块符号
       网格、可誊入隔离机的补播码让发送端只播差额——以及 Agent 技能
       （SKILL.md + CLI/JSON 契约），一句提示词即可驱动收发全流程。
