@@ -16,6 +16,26 @@ pub struct Preset {
     pub repair_pct: u32,
 }
 
+pub const MP15: Preset = Preset {
+    name: "mp15",
+    version: 15,
+    ec: EcLevel::L,
+    fps: 20.0,
+    lanes: 1,
+    hold_refreshes: 3,
+    repair_pct: 30,
+};
+
+pub const MP20: Preset = Preset {
+    name: "mp20",
+    version: 20,
+    ec: EcLevel::L,
+    fps: 20.0,
+    lanes: 1,
+    hold_refreshes: 3,
+    repair_pct: 30,
+};
+
 pub const ROBUST: Preset = Preset {
     name: "robust",
     version: 15,
@@ -76,7 +96,13 @@ pub const MEGABIT: Preset = Preset {
     repair_pct: 20,
 };
 
-pub const ALL: [Preset; 6] = [ROBUST, BALANCED, TURBO15, TURBO30, TURBO60, MEGABIT];
+/// 手机档（mp15/mp20）：给手机 ~30fps 相机对屏实时扫描用，与桌面录像档的取舍不同。
+/// 关键不是快，而是：模块更大（V15/V20 才能在相机帧里保住每模块 >=5px）+
+/// 每码停留 3 个刷新（20fps），让 ~33ms 的相机曝光大概率完整落在一个码的显示期内，
+/// 避免拍到换帧叠影。高 repair 对冲手机端的对焦/抖动丢帧。
+pub const ALL: [Preset; 8] = [
+    MP15, MP20, ROBUST, BALANCED, TURBO15, TURBO30, TURBO60, MEGABIT,
+];
 
 pub fn by_name(name: &str) -> Option<Preset> {
     ALL.iter().copied().find(|p| p.name == name)

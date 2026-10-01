@@ -384,6 +384,8 @@ fn format_prepare_json(
     let _ = writeln!(out, "  \"prepare_secs\": {:.3},", prepared.secs);
     let _ = writeln!(out, "  \"estimated_seconds\": {{");
     let presets = [
+        ("mp15", 20.0),
+        ("mp20", 20.0),
         ("turbo60", 60.0),
         ("turbo30", 30.0),
         ("turbo15", 15.0),
