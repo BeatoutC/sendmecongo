@@ -1,0 +1,26 @@
+[package]
+name = "sendmecongo-decoder-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "rxing QR decoder compiled to wasm32 for the sendmecongo-mp WeChat miniprogram worker"
+
+[lib]
+# C ABI over exported wasm functions; no wasm-bindgen, so the miniprogram side
+# needs no generated glue (which assumes a browser/Node module system).
+# rlib is for the native example/test harness; cdylib is the wasm artifact.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Same feature set as sendmecongo-recv: QR only, character-set support ON —
+# byte-mode QR payloads are routed through the charset layer and every frame
+# is rejected without `encoding_rs` (the failure looks like "camera saw nothing").
+rxing = { version = "0.9", default-features = false, features = [
+    "decoders",
+    "multi_barcode_readers",
+    "qrcode",
+    "encoding_rs",
+] }
+
+# Note: the wasm-release profile lives at the workspace root (Cargo ignores
+# profiles declared in non-root packages).

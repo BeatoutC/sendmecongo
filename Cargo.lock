@@ -3519,8 +3519,6 @@ checksum = "bba7bb825f634907ff7684a14f4abd999d477e8f7b7a9a8ebbf79ba3ffe0b329"
 [[package]]
 name = "rxing"
 version = "0.9.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6609a7ccb6435312dd3a2bff9924cdbb1c96050510fff30676c3d7b8b0045739"
 dependencies = [
  "chrono",
  "codepage-437",
@@ -3612,7 +3610,7 @@ checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 
 [[package]]
 name = "sendmecongo-bench"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "image",
  "minifb",
@@ -3622,7 +3620,7 @@ dependencies = [
 
 [[package]]
 name = "sendmecongo-core"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "brotli",
  "crc32fast",
@@ -3637,8 +3635,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sendmecongo-decoder-wasm"
+version = "0.6.0"
+dependencies = [
+ "rxing",
+]
+
+[[package]]
 name = "sendmecongo-recv"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "eframe",
  "openh264",
@@ -3653,7 +3658,7 @@ dependencies = [
 
 [[package]]
 name = "sendmecongo-send"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "core-graphics 0.24.0",
  "eframe",
@@ -3666,7 +3671,7 @@ dependencies = [
 
 [[package]]
 name = "sendmecongo-ui"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "eframe",
  "image",

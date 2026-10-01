@@ -1,0 +1,349 @@
+/*
+ * Copyright 2008 ZXing authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+// package com.google.zxing.client.result;
+
+// import java.text.DateFormat;
+// import java.text.ParseException;
+// import java.text.SimpleDateFormat;
+// import java.util.Calendar;
+// import java.util.Date;
+// import java.util.GregorianCalendar;
+// import java.util.Locale;
+// import java.util.TimeZone;
+// import java.util.regex.Matcher;
+// import java.util.regex.Pattern;
+
+use chrono::{DateTime, NaiveDateTime};
+use chrono_tz::Tz;
+use once_cell::sync::Lazy;
+use regex::Regex;
+
+use crate::common::Result;
+use crate::exceptions::Exceptions;
+
+use super::{ParsedRXingResult, ParsedRXingResultType, maybe_append_multiple, maybe_append_string};
+
+// const RFC2445_DURATION: &'static str =
+//     "P(?:(\\d+)W)?(?:(\\d+)D)?(?:T(?:(\\d+)H)?(?:(\\d+)M)?(?:(\\d+)S)?)?";
+const RFC2445_DURATION_FIELD_UNITS: [i64; 5] = [
+    7 * 24 * 60 * 60 * 1000, // 1 week
+    24 * 60 * 60 * 1000,     // 1 day
+    60 * 60 * 1000,          // 1 hour
+    60 * 1000,               // 1 minute
+    1000,                    // 1 second
+];
+
+static DATE_TIME: Lazy<Regex> = Lazy::new(|| Regex::new("[0-9]{8}(T[0-9]{6}Z?)?").unwrap());
+static RFC2445_DURATION: Lazy<Regex> = Lazy::new(|| {
+    Regex::new("P(?:(\\d+)W)?(?:(\\d+)D)?(?:T(?:(\\d+)H)?(?:(\\d+)M)?(?:(\\d+)S)?)?").unwrap()
+});
+
+const YMD_THMS_FORMAT: &str = "%Y%m%dT%H%M%S";
+const YMD_THMSZ_FORMAT: &str = "%Y%m%dT%H%M%SZ";
+
+// const DATE_TIME: &'static str = "[0-9]{8}(T[0-9]{6}Z?)?";
+
+/**
+ * Represents a parsed result that encodes a calendar event at a certain time, optionally
+ * with attendees and a location.
+ *
+ * @author Sean Owen
+ */
+#[derive(Debug)]
+pub struct CalendarParsedRXingResult {
+    summary: String,
+    start: i64,
+    startAllDay: bool,
+    end: i64,
+    endAllDay: bool,
+    location: String,
+    organizer: String,
+    attendees: Vec<String>,
+    description: String,
+    latitude: f64,
+    longitude: f64,
+}
+
+impl ParsedRXingResult for CalendarParsedRXingResult {
+    fn getType(&self) -> super::ParsedRXingResultType {
+        ParsedRXingResultType::Calendar
+    }
+
+    fn getDisplayRXingResult(&self) -> String {
+        let mut result = String::with_capacity(100);
+        maybe_append_string(&self.summary, &mut result);
+        maybe_append_string(
+            &Self::format_event(self.startAllDay, self.start),
+            &mut result,
+        );
+        maybe_append_string(&Self::format_event(self.endAllDay, self.end), &mut result);
+        maybe_append_string(&self.location, &mut result);
+        maybe_append_string(&self.organizer, &mut result);
+        maybe_append_multiple(&self.attendees, &mut result);
+        maybe_append_string(&self.description, &mut result);
+
+        result
+    }
+}
+
+impl CalendarParsedRXingResult {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        summary: String,
+        startString: String,
+        endString: String,
+        durationString: String,
+        location: String,
+        organizer: String,
+        attendees: Vec<String>,
+        description: String,
+        latitude: f64,
+        longitude: f64,
+    ) -> Result<Self> {
+        let start = Self::parseDate(startString.clone())?;
+        let end = if endString.is_empty() {
+            let durationMS = Self::parseDurationMS(&durationString)?;
+            if durationMS < 0 {
+                -1
+            } else {
+                start + (durationMS / 1000)
+            }
+        } else {
+            Self::parseDate(endString.clone())?
+        };
+
+        let startAllDay = startString.len() == 8;
+        let endAllDay = !endString.is_empty() && endString.len() == 8;
+
+        Ok(Self {
+            summary,
+            start,
+            startAllDay,
+            end,
+            endAllDay,
+            location,
+            organizer,
+            attendees,
+            description,
+            latitude,
+            longitude,
+        })
+    }
+
+    /**
+     * Parses a string as a date. RFC 2445 allows the start and end fields to be of type DATE (e.g. 20081021)
+     * or DATE-TIME (e.g. 20081021T123000 for local time, or 20081021T123000Z for UTC).
+     *
+     * @param when The string to parse
+     * @throws ParseException if not able to parse as a date
+     */
+    fn parseDate(when: String) -> Result<i64> {
+        if !DATE_TIME.is_match(&when) {
+            return Err(Exceptions::parse_with(when));
+        }
+        if when.len() == 8 {
+            // Show only year/month/day
+            let date_format_string = YMD_THMSZ_FORMAT;
+            // DateFormat format = new SimpleDateFormat("yyyyMMdd", Locale.ENGLISH);
+            // For dates without a time, for purposes of interacting with Android, the resulting timestamp
+            // needs to be midnight of that day in GMT. See:
+            // http://code.google.com/p/android/issues/detail?id=8330
+            return match NaiveDateTime::parse_from_str(
+                &format!("{}T000000Z", &when,),
+                date_format_string,
+            ) {
+                Ok(dtm) => Ok(dtm.and_utc().timestamp()),
+                Err(e) => Err(Exceptions::parse_with(e.to_string())),
+            };
+        }
+        // The when string can be local time, or UTC if it ends with a Z
+        if when.len() == 16
+            && when
+                .chars()
+                .nth(15)
+                .ok_or(Exceptions::INDEX_OUT_OF_BOUNDS)?
+                == 'Z'
+        {
+            return match NaiveDateTime::parse_from_str(&when, YMD_THMSZ_FORMAT) {
+                Ok(dtm) => Ok(dtm.and_utc().timestamp()),
+                Err(e) => Err(Exceptions::parse_with(format!(
+                    "couldn't parse string: {e}"
+                ))),
+            };
+        }
+        // Try once more, with weird tz formatting
+        if when.len() > 16 {
+            let time_part = &when[..15];
+            let tz_part = &when[15..];
+            let tz_parsed: Tz = match tz_part.parse() {
+                Ok(time_zone) => time_zone,
+                Err(e) => {
+                    return Err(Exceptions::parse_with(format!(
+                        "couldn't parse timezone '{tz_part}': {e}"
+                    )));
+                }
+            };
+
+            return match NaiveDateTime::parse_from_str(time_part, YMD_THMS_FORMAT) {
+                Ok(dtm) => Ok(dtm.and_utc().with_timezone(&tz_parsed).timestamp()),
+                Err(e) => Err(Exceptions::parse_with(format!(
+                    "couldn't parse string: {e}"
+                ))),
+            };
+        }
+
+        // Try a final time with an exact length
+        if when.len() == 15 {
+            return match NaiveDateTime::parse_from_str(&when, YMD_THMS_FORMAT) {
+                Ok(dtm) => Ok(dtm.and_utc().timestamp()),
+                Err(e) => Err(Exceptions::parse_with(format!(
+                    "couldn't parse local time: {e}"
+                ))),
+            };
+        }
+        Self::parseDateTimeString(&when)
+    }
+
+    fn format_event(allDay: bool, date: i64) -> String {
+        if date < 0 {
+            return String::default();
+        }
+        let format_string = if allDay { "%F" } else { "%c" };
+        // DateFormat format = allDay
+        //     ? DateFormat.getDateInstance(DateFormat.MEDIUM)
+        //     : DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.MEDIUM);
+        // return format.format(date);
+        if let Some(dtm) = DateTime::from_timestamp(date, 0) {
+            dtm.format(format_string).to_string()
+        } else {
+            String::default()
+        }
+    }
+
+    fn parseDurationMS(durationString: &str) -> Result<i64> {
+        if durationString.is_empty() {
+            return Ok(-1);
+        }
+        // let regex = Regex::new(RFC2445_DURATION).unwrap();
+        if let Some(m) = RFC2445_DURATION.captures(durationString) {
+            let mut durationMS: i64 = 0;
+            for (i, unit) in RFC2445_DURATION_FIELD_UNITS.iter().enumerate() {
+                // for i in 0..RFC2445_DURATION_FIELD_UNITS.len() {
+                // for (int i = 0; i < RFC2445_DURATION_FIELD_UNITS.length; i++) {
+                let fieldValue = m.get(i + 1);
+                if let Some(parseable) = fieldValue {
+                    let z = parseable
+                        .as_str()
+                        .parse::<i64>()
+                        .map_err(|e| Exceptions::parse_with(e.to_string()))?;
+                    durationMS += unit * z;
+                }
+            }
+            Ok(durationMS)
+        } else {
+            Ok(-1)
+        }
+    }
+
+    fn parseDateTimeString(dateTimeString: &str) -> Result<i64> {
+        if let Ok(dtm) = DateTime::parse_from_str(dateTimeString, YMD_THMS_FORMAT) {
+            Ok(dtm.timestamp())
+        } else {
+            Err(Exceptions::parse_with(format!(
+                "Couldn't parse {dateTimeString}"
+            )))
+        }
+        // DateFormat format = new SimpleDateFormat("yyyyMMdd'T'HHmmss", Locale.ENGLISH);
+        // return format.parse(dateTimeString).getTime();
+    }
+
+    pub fn getSummary(&self) -> &String {
+        &self.summary
+    }
+
+    /**
+     * @return start time
+     * @see #getEndTimestamp()
+     */
+    pub fn getStartTimestamp(&self) -> i64 {
+        self.start
+    }
+
+    /**
+     * @return true if start time was specified as a whole day
+     */
+    pub fn isStartAllDay(&self) -> bool {
+        self.startAllDay
+    }
+
+    /**
+     * @return event end {@link Date}, or -1 if event has no duration
+     * @see #getStartTimestamp()
+     */
+    pub fn getEndTimestamp(&self) -> i64 {
+        self.end
+    }
+
+    /**
+     * @return true if end time was specified as a whole day
+     */
+    pub fn isEndAllDay(&self) -> bool {
+        self.endAllDay
+    }
+
+    pub fn getLocation(&self) -> &str {
+        &self.location
+    }
+
+    pub fn getOrganizer(&self) -> &str {
+        &self.organizer
+    }
+
+    pub fn getAttendees(&self) -> &Vec<String> {
+        &self.attendees
+    }
+
+    pub fn getDescription(&self) -> &str {
+        &self.description
+    }
+
+    pub fn getLatitude(&self) -> f64 {
+        self.latitude
+    }
+
+    pub fn getLongitude(&self) -> f64 {
+        self.longitude
+    }
+}
+
+impl PartialEq for CalendarParsedRXingResult {
+    fn eq(&self, other: &Self) -> bool {
+        self.summary == other.summary
+            && self.start == other.start
+            && self.startAllDay == other.startAllDay
+            && self.end == other.end
+            && self.endAllDay == other.endAllDay
+            && self.location == other.location
+            && self.organizer == other.organizer
+            && self.attendees == other.attendees
+            && self.description == other.description
+            && self.latitude == other.latitude
+            && self.longitude == other.longitude
+    }
+}
+
+impl Eq for CalendarParsedRXingResult {}

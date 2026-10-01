@@ -1,0 +1,24 @@
+// dxfilmedge-1
+
+#![cfg(all(feature = "image", feature = "oned", feature = "decoders"))]
+
+use rxing::{BarcodeFormat, FilteredImageReader, MultiFormatReader};
+
+mod common;
+
+#[cfg(feature = "image_formats")]
+#[test]
+fn dx_film_edge() {
+    let mut tester = common::AbstractBlackBoxTestCase::new(
+        "test_resources/blackbox/dxfilmedge-1",
+        FilteredImageReader::new(MultiFormatReader::default()),
+        BarcodeFormat::DXFilmEdge,
+    );
+
+    tester.add_test(1, 3, 0.0);
+    tester.add_test(0, 3, 90.0);
+    tester.add_test(1, 3, 180.0);
+    tester.add_test(0, 0, 320.0);
+
+    tester.test_black_box()
+}

@@ -1,0 +1,262 @@
+/*
+ * Copyright 2007 ZXing authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+use std::{collections::HashMap, fmt};
+
+use crate::{
+    BarcodeFormat, MetadataDictionary, Point, RXingResultMetadataType, RXingResultMetadataValue,
+    common::cpp_essentials::DecoderResult,
+};
+
+pub type RXingResultMetaDataDictionary = HashMap<RXingResultMetadataType, RXingResultMetadataValue>;
+
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
+/**
+ * <p>Encapsulates the result of decoding a barcode within an image.</p>
+ *
+ * @author Sean Owen
+ */
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RXingResult {
+    text: String,
+    rawBytes: Vec<u8>,
+    numBits: usize,
+    resultPoints: Vec<Point>,
+    format: BarcodeFormat,
+    resultMetadata: RXingResultMetaDataDictionary,
+    timestamp: u128,
+    line_count: usize,
+}
+impl RXingResult {
+    /// Wall-clock timestamp in millis. `wasm32-unknown-unknown` has no time
+    /// source (`std::time` is unimplemented there and chrono panics at
+    /// runtime), and this value is an opaque ID that no decoder consumes,
+    /// so wasm builds report 0.
+    fn now_millis() -> u128 {
+        #[cfg(target_arch = "wasm32")]
+        let v = 0u128;
+        #[cfg(not(target_arch = "wasm32"))]
+        let v = chrono::Utc::now().timestamp_millis() as u128;
+        v
+    }
+
+    pub fn new(
+        text: &str,
+        rawBytes: Vec<u8>,
+        resultPoints: Vec<Point>,
+        format: BarcodeFormat,
+    ) -> Self {
+        Self::new_timestamp(
+            text,
+            rawBytes,
+            resultPoints,
+            format,
+            Self::now_millis(),
+        )
+    }
+
+    pub fn new_timestamp(
+        text: &str,
+        rawBytes: Vec<u8>,
+        resultPoints: Vec<Point>,
+        format: BarcodeFormat,
+        timestamp: u128,
+    ) -> Self {
+        let l = rawBytes.len();
+        Self::new_complex(text, rawBytes, 8 * l, resultPoints, format, timestamp)
+    }
+
+    pub fn new_complex(
+        text: &str,
+        rawBytes: Vec<u8>,
+        numBits: usize,
+        resultPoints: Vec<Point>,
+        format: BarcodeFormat,
+        timestamp: u128,
+    ) -> Self {
+        Self {
+            text: text.to_owned(),
+            rawBytes,
+            numBits,
+            resultPoints,
+            format,
+            resultMetadata: HashMap::new(),
+            timestamp,
+            line_count: 0,
+        }
+    }
+
+    pub fn with_point(self, points: Vec<Point>) -> Self {
+        Self {
+            text: self.text,
+            rawBytes: self.rawBytes,
+            numBits: self.numBits,
+            resultPoints: points,
+            format: self.format,
+            resultMetadata: self.resultMetadata,
+            timestamp: self.timestamp,
+            line_count: self.line_count,
+        }
+    }
+
+    pub fn with_decoder_result<T>(
+        res: DecoderResult<T>,
+        resultPoints: &[Point],
+        format: BarcodeFormat,
+    ) -> Self
+    where
+        T: Copy + Clone + Default + Eq + PartialEq,
+    {
+        let mut new_res = Self::new(
+            &res.text(),
+            res.content().bytes().to_vec(),
+            resultPoints.to_vec(),
+            format,
+        );
+
+        let mut meta_data = MetadataDictionary::new();
+        meta_data.insert(
+            RXingResultMetadataType::ERROR_CORRECTION_LEVEL,
+            RXingResultMetadataValue::ErrorCorrectionLevel(res.ecLevel().to_owned()),
+        );
+        meta_data.insert(
+            RXingResultMetadataType::STRUCTURED_APPEND_PARITY,
+            RXingResultMetadataValue::StructuredAppendParity(res.structuredAppend().count),
+        );
+        meta_data.insert(
+            RXingResultMetadataType::STRUCTURED_APPEND_SEQUENCE,
+            RXingResultMetadataValue::StructuredAppendSequence(res.structuredAppend().index),
+        );
+        meta_data.insert(
+            RXingResultMetadataType::SYMBOLOGY_IDENTIFIER,
+            RXingResultMetadataValue::SymbologyIdentifier(res.symbologyIdentifier()),
+        );
+
+        new_res.putAllMetadata(meta_data);
+
+        new_res
+    }
+
+    /**
+     * @return raw text encoded by the barcode
+     */
+    pub fn getText(&self) -> &str {
+        &self.text
+    }
+
+    /**
+     * @return raw bytes encoded by the barcode, if applicable, otherwise {@code null}
+     */
+    pub fn getRawBytes(&self) -> &[u8] {
+        &self.rawBytes
+    }
+
+    /**
+     * @return how many bits of {@link #getRawBytes()} are valid; typically 8 times its length
+     * @since 3.3.0
+     */
+    pub fn getNumBits(&self) -> usize {
+        self.numBits
+    }
+
+    /**
+     * @return points related to the barcode in the image. These are typically points
+     *         identifying finder patterns or the corners of the barcode. The exact meaning is
+     *         specific to the type of barcode that was decoded.
+     */
+    pub fn getPoints(&self) -> &[Point] {
+        &self.resultPoints
+    }
+
+    pub fn getPointsMut(&mut self) -> &mut [Point] {
+        &mut self.resultPoints
+    }
+
+    /** Currently necessary because the external OneDReader proc macro uses it. */
+    pub fn getRXingResultPoints(&self) -> &[Point] {
+        &self.resultPoints
+    }
+
+    /** Currently necessary because the external OneDReader proc macro uses it. */
+    pub fn getRXingResultPointsMut(&mut self) -> &mut [Point] {
+        &mut self.resultPoints
+    }
+
+    /**
+     * @return {@link BarcodeFormat} representing the format of the barcode that was decoded
+     */
+    pub fn getBarcodeFormat(&self) -> &BarcodeFormat {
+        &self.format
+    }
+
+    /**
+     * @return {@link Map} mapping {@link RXingResultMetadataType} keys to values. May be
+     *   {@code null}. This contains optional metadata about what was detected about the barcode,
+     *   like orientation.
+     */
+    pub fn getRXingResultMetadata(&self) -> &RXingResultMetaDataDictionary {
+        &self.resultMetadata
+    }
+
+    pub fn putMetadata(
+        &mut self,
+        md_type: RXingResultMetadataType,
+        value: RXingResultMetadataValue,
+    ) {
+        self.resultMetadata.insert(md_type, value);
+    }
+
+    pub fn putAllMetadata(&mut self, metadata: RXingResultMetaDataDictionary) {
+        if self.resultMetadata.is_empty() {
+            let _ = std::mem::replace(&mut self.resultMetadata, metadata);
+        } else {
+            for (key, value) in metadata.into_iter() {
+                self.resultMetadata.insert(key, value);
+            }
+        }
+    }
+
+    pub fn addPoints(&mut self, newPoints: &mut Vec<Point>) {
+        if !newPoints.is_empty() {
+            self.resultPoints.append(newPoints);
+        }
+    }
+
+    pub fn getTimestamp(&self) -> u128 {
+        self.timestamp
+    }
+
+    pub fn line_count(&self) -> usize {
+        self.line_count
+    }
+
+    pub fn set_line_count(&mut self, lc: usize) {
+        self.line_count = lc
+    }
+
+    pub fn replace_points(&mut self, points: Vec<Point>) {
+        self.resultPoints = points
+    }
+}
+
+impl fmt::Display for RXingResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.text)
+    }
+}

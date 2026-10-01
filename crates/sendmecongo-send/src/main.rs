@@ -386,6 +386,9 @@ fn format_prepare_json(
     let presets = [
         ("mp15", 20.0),
         ("mp20", 20.0),
+        ("mp30", 10.0),
+        ("mp40", 10.0),
+        ("mp20", 20.0),
         ("turbo60", 60.0),
         ("turbo30", 30.0),
         ("turbo15", 15.0),

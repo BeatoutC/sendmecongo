@@ -6,13 +6,22 @@ members = [
     "crates/sendmecongo-ui",
     "crates/sendmecongo-send",
     "crates/sendmecongo-recv",
+    "crates/sendmecongo-decoder-wasm",
 ]
 
 [workspace.package]
-version = "0.5.2"
+version = "0.6.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/BeatoutC/sendmecongo"
+
+# Vendored rxing 0.9.2 (crates/rxing-fork), identical to upstream except:
+# RXingResult timestamps gate `chrono::Utc::now()` off on wasm32 — that platform
+# has no time source (`std::time` unimplemented) and every successful decode
+# constructs an RXingResult, so the wasm decoder aborted on its first hit.
+# Both files carry the fix inline; applies to the whole workspace.
+[patch.crates-io]
+rxing = { path = "crates/rxing-fork" }
 
 [workspace.dependencies]
 # 0.33 is the newest eframe whose MSRV (1.88) matches the toolchain on the build machine.
@@ -23,3 +32,13 @@ eframe = "0.33"
 [profile.release]
 opt-level = 3
 lto = "thin"
+
+# For sendmecongo-decoder-wasm (wasm32): the .wasm is base64-embedded into the
+# miniprogram package (2 MB main-package budget), and decode throughput is the
+# whole point of this build. Smaller + faster than the shared release profile.
+[profile.wasm-release]
+inherits = "release"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

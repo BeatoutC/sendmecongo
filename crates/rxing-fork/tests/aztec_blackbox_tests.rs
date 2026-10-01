@@ -1,0 +1,82 @@
+/*
+ * Copyright 2008 ZXing authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+#![cfg(all(feature = "image", feature = "aztec", feature = "decoders"))]
+
+use rxing::{BarcodeFormat, aztec::AztecReader};
+
+mod common;
+
+/**
+ * @author David Olivier
+ */
+#[cfg(feature = "image_formats")]
+#[test]
+fn aztec_black_box1_test_case() {
+    let mut tester = common::AbstractBlackBoxTestCase::new(
+        "test_resources/blackbox/aztec-1",
+        AztecReader {},
+        BarcodeFormat::AZTEC,
+    );
+
+    // super("src/test/resources/blackbox/aztec-1", AztecReader::new(), BarcodeFormat::AZTEC);
+    tester.add_test(14, 14, 0.0);
+    tester.add_test(14, 14, 90.0);
+    tester.add_test(14, 14, 180.0);
+    tester.add_test(14, 14, 270.0);
+
+    tester.test_black_box();
+}
+
+/**
+ * A test of Aztec barcodes under real world lighting conditions, taken with a mobile phone.
+ *
+ * @author dswitkin@google.com (Daniel Switkin)
+ */
+#[cfg(feature = "image_formats")]
+#[test]
+fn aztec_black_box2_test_case() {
+    let mut tester = common::AbstractBlackBoxTestCase::new(
+        "test_resources/blackbox/aztec-2",
+        AztecReader {},
+        BarcodeFormat::AZTEC,
+    );
+    // super(, new AztecReader(), BarcodeFormat.AZTEC);
+    tester.add_test(5, 5, 0.0);
+    tester.add_test(4, 4, 90.0);
+    tester.add_test(6, 6, 180.0);
+    tester.add_test(3, 3, 270.0);
+
+    tester.test_black_box();
+}
+
+/**
+ * Regression test for rxing-core/rxing#92 / zxing/zxing#1662: a compact Aztec symbol whose
+ * bullseye's classic diagonal-corner-walk detector (`get_bulls_eye_corners`) fails on, because
+ * one ring desyncs by a module between its four independently-walked corners. Covered by the
+ * zxing-cpp-derived concentric-pattern detector added in `aztec/detector/zxing_cpp_detector.rs`.
+ */
+#[cfg(feature = "image_formats")]
+#[test]
+fn aztec_black_box3_test_case() {
+    let mut tester = common::AbstractBlackBoxTestCase::new(
+        "test_resources/blackbox/aztec-3",
+        AztecReader {},
+        BarcodeFormat::AZTEC,
+    );
+    tester.add_test(1, 1, 0.0);
+
+    tester.test_black_box();
+}

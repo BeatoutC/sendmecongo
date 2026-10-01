@@ -1,0 +1,165 @@
+[package]
+name = "rxing"
+version = "0.9.2"
+description="A rust port of the zxing barcode library."
+license="Apache-2.0"
+repository="https://github.com/rxing-core/rxing"
+keywords = ["barcode", "barcode_2d", "barcode_1d", "barcode_reader", "barcode_writer"]
+edition = "2024"
+exclude = [
+    "test_resources/*",
+]
+rust-version = "1.85"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+regex = "1.12"
+fancy-regex = {version = "0.18", optional = true}
+once_cell = "1.21"
+encoding_rs = { version = "0.8", optional = true }
+encoding = { version = "0.2", optional = true }
+urlencoding = {version = "2.1", optional = true}
+uriparse = {version = "0.6", optional = true}
+chrono = { version = "0.4", default-features = false, features = ["clock", "std", "oldtime"] }
+chrono-tz = {version = "0.10", optional = true}
+image = {version = "=0.25.8", optional = true, default-features = false}
+imageproc = {version = "0.25", optional = true}
+unicode-segmentation = "1.13"
+codepage-437 = {version = "0.1", optional = true}
+rxing-one-d-proc-derive = {version = "0.9", path ="./crates/one-d-proc-derive", optional = true}
+num = "0.4"
+svg = {version = "0.18", optional = true}
+resvg = {version = "0.45", optional = true, default-features=false}
+serde = { version = "1", features = ["derive", "rc"], optional = true }
+thiserror = "2.0"
+
+[dev-dependencies]
+java-properties = "2.0"
+java-rand = "0.2"
+rand = "0.10"
+criterion = "0.7"
+
+[features]
+default = [
+    "image",
+    "client_support",
+    "image_formats",
+    "serde",
+    "encoding_rs",
+    "encoders",
+    "decoders",
+    "full_barcode_format_support",
+    "multi_barcode_readers"
+]
+
+#/// Enable features required for image manipulation and reading.
+image = ["dep:image", "dep:imageproc"]
+image_formats = [
+    "image",
+    "image/gif",
+    "image/jpeg",
+    "image/ico",
+    "image/png",
+    "image/pnm",
+    "image/tga",
+    "image/tiff",
+    "image/webp",
+    "image/bmp",
+    "image/hdr",
+    "image/dds",
+    "image/qoi",
+    "image/avif",
+    "image/exr",
+    "image/ff",
+]
+
+#/// Enable barcode encoders
+encoders = []
+
+#/// Enable barcode decoders
+decoders = []
+
+#/// Disable all CharacterSet Support, this will break many barcode formats, but may be desirable for some use cases.
+no_character_set_support = []
+
+#/// Enable support for all barcode formats, this is a large amount of code, so it is optional.
+full_barcode_format_support = [
+    "aztec",
+    "maxicode",
+    "qrcode",
+    "datamatrix",
+    "oned",
+    "pdf417"
+]
+
+#//// Enable support for Aztec barcodes
+aztec = []
+
+#//// Enable support for Maxicode barcodes
+maxicode = []
+
+#//// Enable support for QR Code barcodes
+qrcode = []
+
+#//// Enable support for Data Matrix barcodes
+datamatrix = []
+
+#//// Enable support for 1D barcodes
+oned = ["dep:rxing-one-d-proc-derive"]
+
+#//// Enable support for PDF417 barcodes
+pdf417 = []
+
+#/// Enable support for multiple barcode reading
+multi_barcode_readers =  ["decoders"]
+
+#/// Enable support for encoding_rs (modern, efficient)
+encoding_rs = ["dep:encoding_rs", "dep:codepage-437"]
+
+#/// Enable legacy encoding (original behavior)
+legacy_encoding = ["dep:encoding", "dep:codepage-437"]
+
+#/// Allows the ability to force ISO/IED 18004 compliance.
+#/// Leave disabled unless specificially needed.
+allow_forced_iso_ied_18004_compliance = []
+
+#/// Enable support for writing SVG files
+svg_write = ["dep:svg"]
+
+#/// Enable support for reading SVG files
+svg_read = ["dep:resvg", "image"]
+
+#/// Enable support building this module in WASM
+wasm_support = ["chrono/wasmbind"]
+
+#/// Enable experimental features, risky.
+experimental_features = []
+
+#/// Adds support for serde Serialize and Deserialize for outward facing structs
+serde = ["dep:serde"]
+
+#/// Adds otsu binarizer support using imageproc
+otsu_level = ["image"]
+
+#/// Adds "client" features do decode many common data formats found in barcodes
+client_support = ["dep:chrono-tz", "dep:fancy-regex", "dep:urlencoding", "dep:uriparse"]
+
+#/// For the `FilteredImageReader` if this feature is enabled it
+#/// will always reverse the order of pyramid scans
+reverse_pyramid_layers = []
+
+[workspace]
+members = [
+    "crates/one-d-proc-derive",
+    "crates/cli"
+]
+
+[[bench]]
+name = "benchmarks"
+harness = false
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
