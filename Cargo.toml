@@ -7,6 +7,7 @@ members = [
     "crates/sendmecongo-send",
     "crates/sendmecongo-recv",
     "crates/sendmecongo-decoder-wasm",
+    "crates/sendmecongo-android",
 ]
 
 [workspace.package]

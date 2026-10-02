@@ -1,0 +1,27 @@
+[package]
+name = "sendmecongo-android"
+description = "JNI bridge: Android camera luma in, received file bytes out."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+# cdylib = the .so Android loads; rlib = host unit tests still run on the Mac.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+sendmecongo-core = { path = "../sendmecongo-core" }
+jni = "0.21"
+serde_json = "1"
+# Same feature set as sendmecongo-recv (see its Cargo.toml for why
+# `encoding_rs` is not optional even though only raw bytes are read).
+rxing = { version = "0.9", default-features = false, features = [
+    "decoders",
+    "multi_barcode_readers",
+    "qrcode",
+    "encoding_rs",
+] }
+
+[dev-dependencies]
+image = "0.25"
+raptorq = "2.0.1"
