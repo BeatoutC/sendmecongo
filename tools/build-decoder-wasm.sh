@@ -21,7 +21,12 @@ OUT_WASM=../sendmecongo-mp/libs/decoder.wasm
 # (WXWebAssembly on iOS JSCore) is unreliable at memory.grow — a runtime OOM
 # abort inside Rust becomes a wasm trap that kills the whole WeChat process.
 # Pre-sizing removes ALL runtime growth for <=1080p frames. Max 256 MB headroom.
-RUSTFLAGS="-C link-arg=--initial-memory=67108864 -C link-arg=--max-memory=268435456 -C link-arg=-zstack-size=8388608" \
+#
+# Conservative target features: disable simd128 / bulk-memory / reference-types /
+# multivalue — iOS WXWebAssembly runtime is known to be incomplete (no Global
+# export on iOS), and feature instructions are a prime crash suspect. Loops are
+# slower than memory.copy but universally supported.
+RUSTFLAGS="-C link-arg=--initial-memory=67108864 -C link-arg=--max-memory=268435456 -C link-arg=-zstack-size=8388608 -C target-feature=-simd128,-bulk-memory,-reference-types,-multivalue" \
   cargo build -p sendmecongo-decoder-wasm --target wasm32-unknown-unknown --profile wasm-release
 
 mkdir -p "$(dirname "$OUT_WASM")"
