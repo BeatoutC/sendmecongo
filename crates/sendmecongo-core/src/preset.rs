@@ -96,6 +96,32 @@ pub const MP30_30: Preset = Preset {
     repair_pct: 40,
 };
 
+/// 手机双通道档（v0.5.1）：屏幕左右并排两个码，每 tick 出 2 个符号，速率翻倍。
+/// 注意口径：`fps` 是「所有通道合计的符号率」（与 turbo60/megabit 一致），所以
+/// 翻倍 mp40-30 = fps 60 × 2 lanes = 每通道仍 30 符号/s，撕裂帧窗口不变。
+/// 接收端 scanner 本来就支持一帧多码（recv 同款多码检测），Receiver 对 lanes 无感知，
+/// 手机端零代码——纯档位数据。相机要同时框住两个码（手机横持）；每帧解码量翻倍，
+/// 解不动时 KEEP_ONLY_LATEST 自动丢帧，fountain repair 兜底。
+pub const MP40_20X2: Preset = Preset {
+    name: "mp40-20x2",
+    version: 40,
+    ec: EcLevel::L,
+    fps: 40.0,
+    lanes: 2,
+    hold_refreshes: 3,
+    repair_pct: 30,
+};
+
+pub const MP40_30X2: Preset = Preset {
+    name: "mp40-30x2",
+    version: 40,
+    ec: EcLevel::L,
+    fps: 60.0,
+    lanes: 2,
+    hold_refreshes: 2,
+    repair_pct: 40,
+};
+
 pub const ROBUST: Preset = Preset {
     name: "robust",
     version: 15,
@@ -160,10 +186,23 @@ pub const MEGABIT: Preset = Preset {
 /// 关键不是快，而是：模块更大（V15/V20 才能在相机帧里保住每模块 >=5px）+
 /// 每码停留 3 个刷新（20fps），让 ~33ms 的相机曝光大概率完整落在一个码的显示期内，
 /// 避免拍到换帧叠影。高 repair 对冲手机端的对焦/抖动丢帧。
-pub const ALL: [Preset; 13] = [
-    MP15, MP20, MP30, MP40, MP40_20, MP40_30, MP30_30, ROBUST, BALANCED, TURBO15, TURBO30,
-    TURBO60, MEGABIT,
+pub const ALL: [Preset; 15] = [
+    MP15, MP20, MP30, MP40, MP40_20, MP40_30, MP30_30, MP40_20X2, MP40_30X2, ROBUST, BALANCED,
+    TURBO15, TURBO30, TURBO60, MEGABIT,
 ];
+
+#[test]
+fn speed_tier_presets_resolve_and_rate_doubles() {
+    for name in ["mp40-20", "mp40-30", "mp30-30", "mp40-20x2", "mp40-30x2"] {
+        assert!(by_name(name).is_some(), "preset {name} must exist");
+    }
+    let single = by_name("mp40-30").unwrap();
+    let dual = by_name("mp40-30x2").unwrap();
+    // fps 是合计口径：双通道翻倍 = fps×2、每通道符号率不变（撕裂窗口不变）。
+    assert_eq!(dual.fps, single.fps * 2.0);
+    assert_eq!(dual.lanes, 2);
+    assert_eq!(dual.symbol_size(), single.symbol_size());
+}
 
 pub fn by_name(name: &str) -> Option<Preset> {
     ALL.iter().copied().find(|p| p.name == name)
