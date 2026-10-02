@@ -69,3 +69,14 @@ fn mp30_roundtrips_200kb() {
 fn mp15_roundtrips_20kb() {
     roundtrip("small.txt", &payload(20_000), preset::MP15);
 }
+
+/// 提速档：20/30 符号/s 不改变单帧编码，但 repair 40 的 OTI/K' 路径必须同样闭环。
+#[test]
+fn mp40_20_roundtrips_200kb() {
+    roundtrip("report-v0.5.0.bin", &payload(200_000), preset::MP40_20);
+}
+
+#[test]
+fn mp40_30_roundtrips_200kb() {
+    roundtrip("report-v0.5.0.bin", &payload(200_000), preset::MP40_30);
+}

@@ -61,6 +61,41 @@ pub const MP40: Preset = Preset {
     repair_pct: 30,
 };
 
+/// 手机提速档（v0.5.0-android 真机实测 goodput 29 KB/s @ mp40，原生解码余量大）。
+/// 物理约束是撕裂帧：屏幕换码瞬间，相机逐行读出期间拍到「上半旧码下半新码」的帧
+/// 解不出来 → 每码显示时长必须 ≥ 相机逐行读出周期（≈帧周期）。30fps 相机读出
+/// ~33ms → 20 符号/s（50ms/码，hold 3）是 30fps 相机的安全上限；30 符号/s（33ms，
+/// hold 2）要求相机 60fps（读出减半）。高 repair 吸收残余撕裂/丢帧。
+pub const MP40_20: Preset = Preset {
+    name: "mp40-20",
+    version: 40,
+    ec: EcLevel::L,
+    fps: 20.0,
+    lanes: 1,
+    hold_refreshes: 3,
+    repair_pct: 30,
+};
+
+pub const MP40_30: Preset = Preset {
+    name: "mp40-30",
+    version: 40,
+    ec: EcLevel::L,
+    fps: 30.0,
+    lanes: 1,
+    hold_refreshes: 2,
+    repair_pct: 40,
+};
+
+pub const MP30_30: Preset = Preset {
+    name: "mp30-30",
+    version: 30,
+    ec: EcLevel::L,
+    fps: 30.0,
+    lanes: 1,
+    hold_refreshes: 2,
+    repair_pct: 40,
+};
+
 pub const ROBUST: Preset = Preset {
     name: "robust",
     version: 15,
@@ -125,8 +160,9 @@ pub const MEGABIT: Preset = Preset {
 /// 关键不是快，而是：模块更大（V15/V20 才能在相机帧里保住每模块 >=5px）+
 /// 每码停留 3 个刷新（20fps），让 ~33ms 的相机曝光大概率完整落在一个码的显示期内，
 /// 避免拍到换帧叠影。高 repair 对冲手机端的对焦/抖动丢帧。
-pub const ALL: [Preset; 10] = [
-    MP15, MP20, MP30, MP40, ROBUST, BALANCED, TURBO15, TURBO30, TURBO60, MEGABIT,
+pub const ALL: [Preset; 13] = [
+    MP15, MP20, MP30, MP40, MP40_20, MP40_30, MP30_30, ROBUST, BALANCED, TURBO15, TURBO30,
+    TURBO60, MEGABIT,
 ];
 
 pub fn by_name(name: &str) -> Option<Preset> {
