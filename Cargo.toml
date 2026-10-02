@@ -36,13 +36,13 @@ lto = "thin"
 # For sendmecongo-decoder-wasm (wasm32): the .wasm is base64-embedded into the
 # miniprogram package (2 MB main-package budget), and decode throughput is the
 # whole point of this build. Smaller + faster than the shared release profile.
-# Device target is WXWebAssembly on iOS JSCore: lto + aggressive inlining fuse
-# the whole rxing pipeline into one giant function, and WebKit's wasm JIT
-# compiler (OMG) crashes the process on such functions. Keep functions small:
-# no LTO, many codegen units, moderate opt. Decode is still ~10-40ms/frame.
+# Device target is WXWebAssembly on iOS JSCore: decode_rgba crashed the whole
+# WeChat process at opt-level 2/3 (V8 ran the same binary flawlessly), so the
+# build stays deliberately boring: no LTO, low inlining, opt-level 1. Decode
+# is still ~10-40ms/frame, far above the 3-5 decodes/s the camera loop needs.
 [profile.wasm-release]
 inherits = "release"
-opt-level = 2
+opt-level = 1
 lto = false
 codegen-units = 16
 panic = "abort"

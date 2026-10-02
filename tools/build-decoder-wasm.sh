@@ -26,7 +26,7 @@ OUT_WASM=../sendmecongo-mp/libs/decoder.wasm
 # multivalue — iOS WXWebAssembly runtime is known to be incomplete (no Global
 # export on iOS), and feature instructions are a prime crash suspect. Loops are
 # slower than memory.copy but universally supported.
-RUSTFLAGS="-C link-arg=--initial-memory=67108864 -C link-arg=--max-memory=268435456 -C link-arg=-zstack-size=8388608 -C target-feature=-simd128,-bulk-memory,-reference-types,-multivalue -C llvm-args=-inline-threshold=25" \
+RUSTFLAGS="-C link-arg=--initial-memory=67108864 -C link-arg=--max-memory=268435456 -C link-arg=-zstack-size=8388608 -C target-feature=-simd128,-bulk-memory,-reference-types,-multivalue -C llvm-args=-inline-threshold=10" \
   cargo build -p sendmecongo-decoder-wasm --target wasm32-unknown-unknown --profile wasm-release
 
 mkdir -p "$(dirname "$OUT_WASM")"
