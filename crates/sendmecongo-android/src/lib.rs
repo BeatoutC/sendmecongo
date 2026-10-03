@@ -18,7 +18,36 @@ use jni::sys::{jbyteArray, jint, jlong};
 use jni::JNIEnv;
 use sendmecongo_core::{frame, Received, Receiver};
 use std::collections::{HashSet, VecDeque};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
+
+/// Retired session handles awaiting a safe drop. An in-flight `feed` on the
+/// analyzer thread may still hold a handle while `destroy` runs (stop button,
+/// rebinding on rotation); freeing immediately would be a use-after-free, so
+/// sessions are parked here and only truly dropped once enough newer ones
+/// have retired that no live call can still reference them.
+static RETIRED: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+const RETIRE_KEEP: usize = 8;
+
+fn retire(handle: jlong) {
+    let mut list = RETIRED.lock().unwrap_or_else(|e| e.into_inner());
+    list.push(handle as usize);
+    while list.len() > RETIRE_KEEP {
+        let stale = list.remove(0) as *mut Session;
+        drop(unsafe { Box::from_raw(stale) });
+    }
+}
+
+/// Extract a human-readable message from a panic payload.
+fn panic_msg(p: &Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = p.downcast_ref::<&str>() {
+        s.to_string()
+    } else if let Some(s) = p.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "unknown panic".to_string()
+    }
+}
 
 /// Stats window: unique-symbol rate and frame rate are computed over this span.
 const WINDOW: Duration = Duration::from_secs(3);
@@ -165,7 +194,7 @@ pub extern "system" fn Java_local_airgate_recv_NativeBridge_destroy(
     handle: jlong,
 ) {
     if handle != 0 {
-        drop(unsafe { Box::from_raw(handle as *mut Session) });
+        retire(handle);
     }
 }
 
@@ -230,9 +259,21 @@ fn feed_inner(
 
     let started = Instant::now();
     let mut payloads = Vec::new();
-    let _ = session.scanner.scan(std::mem::take(&mut session.luma), w as u32, h as u32, &mut payloads);
+    // A panic inside rxing must never cross the JNI boundary: unwinding through
+    // `extern "system"` aborts the whole process (observed as a tombstone in
+    // NativeBridge_feed). Surface the panic as a stats error instead.
+    let scanned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        session
+            .scanner
+            .scan(std::mem::take(&mut session.luma), w as u32, h as u32, &mut payloads)
+    }));
     session.decode_micros += started.elapsed().as_micros() as u64;
     session.frames += 1;
+    session.luma = Vec::new(); // scanner took it; re-grow next frame
+
+    if let Err(p) = scanned {
+        return Err(format!("decoder panic: {}", panic_msg(&p)));
+    }
 
     let done_now = session.done.is_none();
     for payload in &payloads {
@@ -242,7 +283,6 @@ fn feed_inner(
             session.codes += 1;
         }
     }
-    session.luma = Vec::new(); // scanner took it; re-grow next frame
 
     let unique = session.receiver.frames_used();
     session.window.push_back((Instant::now(), unique, session.frames));
