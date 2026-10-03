@@ -8,6 +8,7 @@ English · [简体中文](README.zh-CN.md)
 **One-way optical file transfer for air-gapped machines.** The sender renders a
 fountain-coded stream of QR codes on screen; any phone camera can record it, and a
 single zero-dependency executable rebuilds the file — byte-for-byte identical.
+Or skip the recording entirely: the Android app scans the screen live.
 
 No network. No USB. No Bluetooth. Nothing leaves the room except light.
 
@@ -75,6 +76,7 @@ The two GUIs draw with OpenGL and need **OpenGL 2.0 or newer**. The
   is slower; shrink the sender window if the symbol rate drops.
 - **macOS**: 11+ (Apple Silicon only).
 - **Linux**: X11 or Wayland with OpenGL 2.0+.
+- **Android**: 10+ (API 29), arm64 — see the next section.
 
 ## Quick start
 
@@ -102,6 +104,37 @@ Recommended recording setup (measured, not guessed): **turbo60 preset,
 resulting 100 KB/s: 1 MB ≈ 10 s, 10 MB ≈ 1.7 min, 64 MB ≈ 10 min. Files above
 64 MB are rejected outright — the optical link and preparation memory both
 make that a bad idea.
+
+## Android receiver: no recording, just point and scan
+
+The same protocol received live — the app reads the QR stream straight off
+the camera preview, so there is no recording step and nothing to copy off
+the phone afterwards by hand.
+
+1. Grab `sendmecongo-recv-android-x.y.z.apk` from the
+   [releases page](https://github.com/BeatoutC/sendmecongo/releases)
+   (Android 10+, arm64-v8a) and install it.
+2. On the sender pick an `mp…` preset — the phone presets use bigger modules
+   and a longer per-code hold, tuned for a phone camera instead of a 4K
+   recording.
+3. Press play, hold the phone up to the screen (landscape for the `x2`
+   dual-lane presets, so both codes fit in frame). Progress and stats show
+   on screen; the finished file can be shared to any other app.
+
+Measured on real hardware (incompressible random data, all runs verified
+byte-identical):
+
+| Preset | QR | Lanes | sym/s | Nominal | Measured goodput |
+|---|---|---|---|---|---|
+| mp40 | V40-L | 1 | 10 | 29.3 KB/s | 29 KB/s |
+| mp40-30 | V40-L | 1 | 30 | 87.9 KB/s | 80+ KB/s |
+| **mp40-30x2** | V40-L | 2 | 60 | 175.9 KB/s | **130 KB/s stable** |
+
+Under the hood it is the same pure-Rust `sendmecongo-core` receiver compiled
+to an arm64 JNI `.so`, driven by a one-screen Kotlin shell (CameraX). The
+manual exposure, 60fps target, 1440×1080 analysis resolution, and the Y-plane
+row-stride contract all live in that shell; the decoder itself is the rxing
+fork with `encoding_rs` enabled (byte-mode QR needs it).
 
 ## Presets and measured throughput
 
@@ -227,6 +260,8 @@ Security → Open Anyway on 15+; no challenge when copied from USB).
       code so the sender replays only the deficit — plus an agent skill
       (SKILL.md + CLI/JSON contract) so an AI agent can drive send/receive
       end to end. See [docs/M2-DESIGN.md](docs/M2-DESIGN.md)
+- [x] Android real-time receiver (v0.5.2): live camera scanning, phone
+      presets, 130 KB/s measured on the dual-lane mp40-30x2 preset.
 - [ ] M3: AES-256-GCM encryption envelope + audit log, multi-file batches,
       automated acceptance matrix
 

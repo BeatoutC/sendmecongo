@@ -3632,7 +3632,7 @@ checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 
 [[package]]
 name = "sendmecongo-android"
-version = "0.6.0"
+version = "0.5.2"
 dependencies = [
  "image",
  "jni 0.21.1",
@@ -3644,7 +3644,7 @@ dependencies = [
 
 [[package]]
 name = "sendmecongo-bench"
-version = "0.6.0"
+version = "0.5.2"
 dependencies = [
  "image",
  "minifb",
@@ -3654,7 +3654,7 @@ dependencies = [
 
 [[package]]
 name = "sendmecongo-core"
-version = "0.6.0"
+version = "0.5.2"
 dependencies = [
  "brotli",
  "crc32fast",
@@ -3670,14 +3670,14 @@ dependencies = [
 
 [[package]]
 name = "sendmecongo-decoder-wasm"
-version = "0.6.0"
+version = "0.5.2"
 dependencies = [
  "rxing",
 ]
 
 [[package]]
 name = "sendmecongo-recv"
-version = "0.6.0"
+version = "0.5.2"
 dependencies = [
  "eframe",
  "openh264",
@@ -3692,7 +3692,7 @@ dependencies = [
 
 [[package]]
 name = "sendmecongo-send"
-version = "0.6.0"
+version = "0.5.2"
 dependencies = [
  "core-graphics 0.24.0",
  "eframe",
@@ -3705,7 +3705,7 @@ dependencies = [
 
 [[package]]
 name = "sendmecongo-ui"
-version = "0.6.0"
+version = "0.5.2"
 dependencies = [
  "eframe",
  "image",
